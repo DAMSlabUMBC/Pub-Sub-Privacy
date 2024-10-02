@@ -9,7 +9,7 @@
 #define DELETION_REQUEST_SUFFIX "/deletion_request"
 #define MAX_TOPIC_LENGTH 256
 
-// Utility function to trim whitespace
+// Utility function to trim the whitespace
 static void trim_whitespace(char *str) {
     char *end;
     // Trim leading space
@@ -30,7 +30,7 @@ static int on_message(int event, void *event_data, void *userdata) {
         return MOSQ_ERR_SUCCESS;
     }
 
-    // Check if the topic ends with /deletion_request
+    // Checking if the topic ends with /deletion_request
     const char *suffix = DELETION_REQUEST_SUFFIX;
     size_t suffix_len = strlen(suffix);
     size_t topic_len = strlen(msg_event->topic);
@@ -40,7 +40,7 @@ static int on_message(int event, void *event_data, void *userdata) {
         return MOSQ_ERR_SUCCESS;
     }
 
-    // Extract the base_topic by removing the /deletion_request suffix
+    // Extracting the base_topic by removing the /deletion_request suffix
     strncpy(base_topic, msg_event->topic, topic_len - suffix_len);
     base_topic[topic_len - suffix_len] = '\0';
     trim_whitespace(base_topic);
@@ -51,7 +51,7 @@ static int on_message(int event, void *event_data, void *userdata) {
     // Define the payload for deletion
     const char *delete_payload = "delete_requested";
 
-    // Publish "delete_requested" to the base_topic
+    // Publishing "delete_requested" to the base_topic
     int rc = mosquitto_broker_publish(
         NULL,                   // Use broker's client ID
         base_topic,             // Publish to the base_topic
