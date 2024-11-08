@@ -236,20 +236,20 @@ class BenchmarkClient:
 
     def _subscribe_pm3(self, topic:str, purpose_filter:str)-> None: #registration by message 
         #define the registration topic format for message based registration 
-        regisration_topic = "$priv/purpose_mangagement"
+        registration_topic = "$priv/purpose_mangagement"
         #subscribe to the message of the purpose being sent out 
-        self.mqtt_client.subscribe(regisration_topic)
+        self.mqtt_client.subscribe(registration_topic)
         #subscribe to the actual purpose message of the data  
         self.mqtt_client.subscribe(topic)
 
 
     def _subscribe_pm4(self,topic:str, purpose_filter:str)->None: #registration by topic 
         #define the registration topic format for topic based registatrion 
-        regisration_topic = f"$priv/MP_registration/{topic}/[{purpose_filter}]"
-        #Sends an empty message to the subscribers indicating which purpose data is about to be sent out 
-        self.mqtt_client.subscribe(regisration_topic)
-        #Sends the actual data message of the specific topic 
-        self.mqtt_client(topic)
+        registration_topic = f"$priv/MP_registration/{topic}/[{purpose_filter}]"
+        #Subscribes to the topic where the empty message is going to be sent out  
+        self.mqtt_client.subscribe(registration_topic)
+        #Subscribes to the  the specific topic 
+        self.mqtt_client.subscribe(topic)
         
 
 
