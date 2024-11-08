@@ -81,6 +81,9 @@ class BenchmarkClient:
         
         self.client_id = client_id
 
+        self.connect_waiting = False
+
+
         # Instantiate client
         self.mqtt_client = mqtt.Client(
             callback_api_version=CallbackAPIVersion.VERSION2,
@@ -88,7 +91,8 @@ class BenchmarkClient:
             protocol=mqtt_version,
             reconnect_on_failure=False
         )
-        
+
+            
         # Create a logger for the client
         self.logger = logging.getLogger(client_id)
         self.mqtt_client.enable_logger(self.logger)
@@ -165,12 +169,23 @@ class BenchmarkClient:
             full_topic = f'{topic}/{purpose_subtopic}'
             self.mqtt_client.publish(topic=full_topic, payload=msg)
 
-        elif method == PurposeManagementMethod.PM_2:
-            raise NotImplementedError
-        elif method == PurposeManagementMethod.PM_3:
-            raise NotImplementedError
-        elif method == PurposeManagementMethod.PM_4:
-            raise NotImplementedError
+        elif method == PurposeManagementMethod.PM_2: #Add the purpose to the message properties instead of the topic name 
+            properties = mqtt.Properties()
+            properties.UserProperty = ('purpose', purpose) 
+            self.mqtt_client.publish(topic=topic, payload=msg, properties=properties)
+
+            
+        elif method == PurposeManagementMethod.PM_3: #Registration by message 
+            registration_topic = "$priv/purpose_mangament"
+            self.mqtt_client.publish(topic=registration_topic, payload=purpose)
+            self.mqtt_client.publish(topic=topic, payload=msg)
+            
+        elif method == PurposeManagementMethod.PM_4: #Registration by topic 
+            registration_topic = f"$priv/MP_registration/{topic}/[{purpose}]"  # Register purpose in special topic format
+            self.mqtt_client.publish(topic=registration_topic, payload="")  # Send empty message to register purpose
+            self.mqtt_client.publish(topic=topic, payload=msg)  # Publish actual message
+
+
         else:
             raise ValueError(f"Unknown method {method}")
         
@@ -195,14 +210,55 @@ class BenchmarkClient:
                 self.mqtt_client.subscribe(topic=topic_list)
 
         elif method == PurposeManagementMethod.PM_2:
-            raise NotImplementedError
+            self.mqtt_client.subscribe(topic, purpose_filter)
+            def on_message_callback(client,userdata,message):
+                purpose_in_message = None
+                for prop in message.properties.UserProperty:
+                    if prop[0] == 'purpose':
+                        purpose_in_message = prop[1]
+                        break
+                if purpose_in_message == purpose_filter:
+                    print("Proceeding message: ", message.payload)
+                else:
+                    print("Ignored message due to mismatch")
+            self.mqtt_client.on_message = on_message_callback
+        
+
+        
         elif method == PurposeManagementMethod.PM_3:
-            raise NotImplementedError
+            self._subscribe_pm3(topic,purpose_filter)
+
         elif method == PurposeManagementMethod.PM_4:
-            raise NotImplementedError
+            self._subscribe_pm4(topic, purpose_filter)
         else:
             raise ValueError(f"Unknown method {method}")
+        #Purpose-Encoding Topics 
+
+    def _subscribe_pm3(self, topic:str, purpose_filter:str)-> None: #registration by message 
+        #define the registration topic format for message based registration 
+        registration_topic = "$priv/purpose_mangagement"
+        #subscribe to the message of the purpose being sent out 
+        self.mqtt_client.subscribe(registration_topic)
+        #subscribe to the actual purpose message of the data  
+        self.mqtt_client.subscribe(topic)
+
+
+    def _subscribe_pm4(self,topic:str, purpose_filter:str)->None: #registration by topic 
+        #define the registration topic format for topic based registatrion 
+        registration_topic = f"$priv/MP_registration/{topic}/[{purpose_filter}]"
+        #Subscribes to the topic where the empty message is going to be sent out  
+        self.mqtt_client.subscribe(registration_topic)
+        #Subscribes to the  the specific topic 
+        self.mqtt_client.subscribe(topic)
         
+
+
+
+
+
+
+    
+
     # Callbacks
     def purpose_management_correctness_message_callback(self, client, userdata, message):
         if message.payload.decode() == "GOOD":
