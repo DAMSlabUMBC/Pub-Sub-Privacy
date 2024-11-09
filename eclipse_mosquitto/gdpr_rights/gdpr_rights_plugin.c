@@ -166,6 +166,7 @@ void get_subscribers_of_publisher(const char *publisher_id, char ***subscriber_i
 /* Extract purpose from properties */
 char *get_purpose_from_properties(const mosquitto_property *props)
 {
+    // Currently returns error find out why
     const mosquitto_property *prop = props;
     while (prop)
     {
@@ -193,8 +194,7 @@ int on_acl_check(int event, void *event_data, void *userdata)
     int access = ed->access;
     const mosquitto_property *props = ed->properties;
 
-    /* You can perform access control checks here based on purposes or other criteria */
-    /* For simplicity, we'll allow all actions */
+    /* Preform access control checks here based on rights */
     return MOSQ_ERR_SUCCESS;
 }
 
@@ -378,6 +378,19 @@ void handle_rights_invocation(const char *publisher_id, struct mosquitto_evt_mes
             free(gdpr_filter);
         }
     }
+}
+
+/* Plugin version */
+int mosquitto_plugin_version(int supported_version_count, const int *supported_versions)
+{
+	int i;
+
+	for(i=0; i<supported_version_count; i++){
+		if(supported_versions[i] == 5){
+			return 5;
+		}
+	}
+	return -1;
 }
 
 /* Plugin initialization function */
