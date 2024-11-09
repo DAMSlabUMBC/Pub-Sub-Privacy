@@ -24,7 +24,7 @@ int callback_acl_check(int event, void *event_data, void *userdata)
     int access = ed->access; // MOSQ_ACL_SUBSCRIBE, MOSQ_ACL_WRITE, or MOSQ_ACL_READ
 
     if (access == MOSQ_ACL_SUBSCRIBE) {
-        /* Handle SUBSCRIBE operation */
+        /* Handle SUBSCRIBE operations */
         /* Extract SP from User Properties */
         const mosquitto_property *prop = ed->properties;
         char *sp_filter = NULL;
@@ -57,7 +57,7 @@ int callback_acl_check(int event, void *event_data, void *userdata)
             return MOSQ_ERR_ACL_DENIED;
         }
     } else if (access == MOSQ_ACL_WRITE) {
-        /* Handle PUBLISH operation */
+        /* Handle PUBLISH operations */
         /* Extract MP from User Properties */
         const mosquitto_property *prop = ed->properties;
         char *mp_filter = NULL;
@@ -126,8 +126,21 @@ int callback_acl_check(int event, void *event_data, void *userdata)
         }
     }
 
-    /* For other access types, allow by default */
+    /* For other access types we allow by default */
     return MOSQ_ERR_SUCCESS;
+}
+
+/* Plugin version */
+int mosquitto_plugin_version(int supported_version_count, const int *supported_versions)
+{
+	int i;
+
+	for(i=0; i<supported_version_count; i++){
+		if(supported_versions[i] == 5){
+			return 5;
+		}
+	}
+	return -1;
 }
 
 /* Plugin initialization function */

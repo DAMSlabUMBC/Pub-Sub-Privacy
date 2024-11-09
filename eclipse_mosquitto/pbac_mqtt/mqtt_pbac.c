@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <mqtt_protocol.h>
+
 /* Define the global mutex */
 pthread_mutex_t pbac_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -13,7 +14,7 @@ pthread_mutex_t pbac_mutex = PTHREAD_MUTEX_INITIALIZER;
 sp_entry_t *sp_list = NULL;
 mp_entry_t *mp_list = NULL;
 
-/* Function prototypes for internal use */
+/* Function prototypes */
 void expand_purpose_filter_recursive(const char *filter, char ***purposes, int *count);
 
 /* Split a string by a delimiter */
@@ -47,7 +48,7 @@ char **split_string(const char *str, const char *delim, int *count)
     return tokens;
 }
 
-/* Expand the purpose filter into all possible purposes */
+/* Expand the purpose filter into all the possible purposes */
 char **expand_purpose_filter(const char *filter, int *count)
 {
     char **purposes = NULL;
@@ -56,6 +57,7 @@ char **expand_purpose_filter(const char *filter, int *count)
     return purposes;
 }
 
+/* Recursively expands a purpose filter */
 void expand_purpose_filter_recursive(const char *filter, char ***purposes, int *count)
 {
     if (!filter || strlen(filter) == 0) {
@@ -103,7 +105,7 @@ void expand_purpose_filter_recursive(const char *filter, char ***purposes, int *
         }
         free(options);
     } else {
-        // No braces left; add the filter as is
+        // No braces left so add the filter as is
         char **temp = realloc(*purposes, sizeof(char *) * (*count + 1));
         if (!temp) return;
         *purposes = temp;
@@ -112,6 +114,7 @@ void expand_purpose_filter_recursive(const char *filter, char ***purposes, int *
     }
 }
 
+/* Frees the memory allocated for expanded purposes */
 void free_expanded_purposes(char **purposes, int count)
 {
     if (purposes) {
@@ -140,6 +143,7 @@ void store_sp(sp_entry_t **list, const char *client_id, const char *topic, const
     pthread_mutex_unlock(&pbac_mutex);
 }
 
+/* Removes a SP entry */
 void remove_sp_entry(sp_entry_t **list, const char *client_id, const char *topic)
 {
     pthread_mutex_lock(&pbac_mutex);
@@ -166,6 +170,7 @@ void remove_sp_entry(sp_entry_t **list, const char *client_id, const char *topic
     pthread_mutex_unlock(&pbac_mutex);
 }
 
+/* Frees the entire SP list */
 void free_sp_list(sp_entry_t **list)
 {
     pthread_mutex_lock(&pbac_mutex);
@@ -199,3 +204,55 @@ void store_mp(mp_entry_t **list, const char *topic, const char *mp_filter)
 
 
 )
+/* Frees the entire MP list */
+void free_mp_list(mp_entry_t **list)
+{
+    pthread_mutex_lock(&pbac_mutex);
+    mp_entry_t *current = *list;
+    while (current) {
+        mp_entry_t *next = current->next;
+        free(current->client_id);
+        free(current->topic);
+        free(current->mp_filter);
+        free_expanded_purposes(current->mp_purposes, current->mp_purpose_count);
+        free(current);
+        current = next;
+    }
+    *list = NULL;
+    pthread_mutex_unlock(&pbac_mutex);
+}
+
+/* Checks if a MP is compatiable with an SP*/
+int check_purpose_compatibility(const char *topic, const char *client_id, const char *mp_filter) 
+{ 
+    int mp_purpose_count = 0; 
+    char **mp_purposes = expand_purpose_filter(mp_filter, &mp_purpose_count); 
+    if (!mp_purposes && mp_purpose_count > 0) { 
+        return 0; // Not compatible 
+    } 
+    pthread_mutex_lock(&pbac_mutex); 
+    
+    /* Find SP entries matching the topic and client_id */ 
+    sp_entry_t *current_sp = sp_list; 
+    while (current_sp) { 
+        if (strcmp(current_sp->client_id, client_id) == 0 && strcmp(current_sp->topic, topic) == 0) { 
+            /* Compare purposes */ 
+            for (int i = 0; i < mp_purpose_count; i++) {
+                 for (int j = 0; j < current_sp->sp_purpose_count; j++) {
+                     if (strcmp(mp_purposes[i], current_sp->sp_purposes[j]) == 0) {
+                         /* Purposes match; allow */ 
+                         pthread_mutex_unlock(&pbac_mutex);
+                         free_expanded_purposes(mp_purposes, mp_purpose_count);
+                         return 1; // Compatible 
+                    } 
+                } 
+            } 
+        } 
+        current_sp = current_sp->next; 
+    }
+    pthread_mutex_unlock(&pbac_mutex);
+    free_expanded_purposes(mp_purposes, mp_purpose_count); 
+                           
+    /* No compatible SP found */ 
+    return 0; // Not compatible 
+}

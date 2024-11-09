@@ -71,7 +71,7 @@ int initialize_database()
     const char *create_table_sql = "CREATE TABLE subscribers ("
                                    "client_id TEXT,"
                                    "topic TEXT,"
-                                   "sp_filter TEXT);"; // Ensure 'sp_filter' is included
+                                   "sp_filter TEXT);"; 
     char *errmsg = NULL;
     rc = sqlite3_exec(db, create_table_sql, NULL, NULL, &errmsg);
     if (rc != SQLITE_OK) {
@@ -132,7 +132,7 @@ int callback_acl_check(int event, void *event_data, void *userdata)
     int access = ed->access; // MOSQ_ACL_SUBSCRIBE, MOSQ_ACL_WRITE, or MOSQ_ACL_READ
 
     if (access == MOSQ_ACL_SUBSCRIBE) {
-        /* Handle SUBSCRIBE operation */
+        /* Handle SUBSCRIBE operations */
         /* Extract SP from User Properties */
         const mosquitto_property *prop = ed->properties;
         char *sp_filter = NULL;
@@ -168,7 +168,7 @@ int callback_acl_check(int event, void *event_data, void *userdata)
             return MOSQ_ERR_ACL_DENIED;
         }
     } else if (access == MOSQ_ACL_WRITE) {
-        /* Handle PUBLISH operation */
+        /* Handle PUBLISH operations */
         if (strcmp(topic, MP_REGISTRATION_TOPIC) == 0) {
             /* This is an MP registration message */
             /* Extract MP registrations from User Properties */
@@ -290,6 +290,8 @@ int callback_acl_check(int event, void *event_data, void *userdata)
     /* For other access types, allow by default */
     return MOSQ_ERR_SUCCESS;
 }
+
+/* Plugin version */
 int mosquitto_plugin_version(int supported_version_count, const int *supported_versions)
 {
 	int i;

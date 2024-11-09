@@ -66,7 +66,7 @@ int callback_acl_check(int event, void *event_data, void *userdata)
     int access = ed->access; // MOSQ_ACL_SUBSCRIBE, MOSQ_ACL_WRITE, or MOSQ_ACL_READ
 
     if (access == MOSQ_ACL_WRITE) {
-        /* Handle PUBLISH operation */
+        /* Handle PUBLISH operations */
         if (strncmp(topic, MP_REGISTRATION_PREFIX, strlen(MP_REGISTRATION_PREFIX)) == 0) {
             /* MP Registration */
             const char *remaining_topic = topic + strlen(MP_REGISTRATION_PREFIX);
@@ -110,7 +110,7 @@ int callback_acl_check(int event, void *event_data, void *userdata)
             return MOSQ_ERR_SUCCESS; // Allow the publish
         }
     } else if (access == MOSQ_ACL_SUBSCRIBE) {
-        /* Handle SUBSCRIBE operation */
+        /* Handle SUBSCRIBE operations */
         /* Check if the subscriber has registered an SP for this topic */
         int has_sp = 0;
 
@@ -175,6 +175,7 @@ int callback_acl_check(int event, void *event_data, void *userdata)
     return MOSQ_ERR_SUCCESS;
 }
 
+/* Plugin Version */
 int mosquitto_plugin_version(int supported_version_count, const int *supported_versions)
 {
 	int i;
