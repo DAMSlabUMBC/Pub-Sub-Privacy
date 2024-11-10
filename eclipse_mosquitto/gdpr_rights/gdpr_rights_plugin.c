@@ -522,8 +522,6 @@ int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **userdata, st
         return MOSQ_ERR_UNKNOWN;
     }
     
-    free(db_path);
-
     /* Register callbacks */
     mosquitto_callback_register(identifier, MOSQ_EVT_ACL_CHECK, on_acl_check, NULL, NULL);
     mosquitto_callback_register(identifier, MOSQ_EVT_MESSAGE, on_message_event, NULL, NULL);

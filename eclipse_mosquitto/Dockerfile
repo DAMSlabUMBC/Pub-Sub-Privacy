@@ -1,12 +1,19 @@
 FROM eclipse-mosquitto:latest
 
-# Install necessary packages including SQLite
+# Install necessary packages including SQLite and debugging tools
 RUN apk update && \
     apk add --no-cache \
         build-base \
         openssl-dev \
         mosquitto-dev \
-        sqlite-dev
+        sqlite-dev \
+        sqlite-libs \
+        gdb \
+        make \
+        musl-dev \
+        libc-dev \
+        strace \
+        bash
 
 # Copy Mosquitto headers for plugin development
 ADD mosquitto_headers/mosquitto_plugin.h /usr/include/
@@ -21,8 +28,8 @@ RUN mkdir -p /build/intent_plugin
 RUN mkdir -p /build/gdpr_plugin
 
 # Copy plugin source files and Makefile for plugins
-ADD pbac_mqtt  /build/intent_plugin
-ADD gdpr_rights /build/gdpr_plugin
+ADD pbac_mqtt/  /build/intent_plugin/
+ADD gdpr_rights/ /build/gdpr_plugin/
 
 # Set working directory for intent management plugin and build
 WORKDIR /build/intent_plugin
@@ -43,6 +50,7 @@ RUN cp /build/gdpr_plugin/gdpr_rights_plugin.so /mosquitto/plugins/
 
 # Create a directory for SQLite database files
 RUN mkdir -p /mosquitto/plugins/db
+RUN touch /mosquitto/plugins/db/mqtt_pbac.db
 ENV GDPR_PLUGIN_DB_PATH=/mosquitto/plugins/db/mqtt_pbac.db
 
 # Copy the configuration file for Mosquitto
@@ -53,4 +61,3 @@ EXPOSE 1883
 
 # Start Mosquitto broker with the custom configuration
 CMD ["/usr/sbin/mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
-

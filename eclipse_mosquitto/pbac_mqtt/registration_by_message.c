@@ -331,11 +331,8 @@ int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **userdata, st
     rc = initialize_database(db_path);
     if (rc != SQLITE_OK)
     {
-        free(db_path);
         return MOSQ_ERR_UNKNOWN;
     }
-
-    free(db_path);
 
     /* Register the ACL check callback */
     rc = mosquitto_callback_register(identifier, MOSQ_EVT_ACL_CHECK, callback_acl_check, NULL, NULL);
