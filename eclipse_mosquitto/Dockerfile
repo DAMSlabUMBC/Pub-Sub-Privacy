@@ -11,6 +11,7 @@ RUN apk update && \
 # Copy Mosquitto headers for plugin development
 ADD mosquitto_headers/mosquitto_plugin.h /usr/include/
 ADD mosquitto_headers/mosquitto_broker.h /usr/include/
+ADD mosquitto_headers/mosquitto.h /usr/include/
 
 # Debug step: List contents of the headers directory
 RUN ls -l /usr/include/
@@ -38,9 +39,11 @@ RUN mkdir -p /mosquitto/plugins
 RUN cp /build/intent_plugin/per_message_declaration.so /mosquitto/plugins/
 RUN cp /build/intent_plugin/registration_by_message.so /mosquitto/plugins/
 RUN cp /build/intent_plugin/registration_by_topic.so /mosquitto/plugins/
-RUN cp /buold/gdpr_plugin/gdpr_rights_plugin.so /mosquitto/plugins/
+RUN cp /build/gdpr_plugin/gdpr_rights_plugin.so /mosquitto/plugins/
+
 # Create a directory for SQLite database files
-RUN mkdir -p /opt/mosquitto/plugins/db
+RUN mkdir -p /mosquitto/plugins/db
+ENV GDPR_PLUGIN_DB_PATH=/mosquitto/plugins/db/mqtt_pbac.db
 
 # Copy the configuration file for Mosquitto
 ADD mosquitto.conf /mosquitto/config/mosquitto.conf

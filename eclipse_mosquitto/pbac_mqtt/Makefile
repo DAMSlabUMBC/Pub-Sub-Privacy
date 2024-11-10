@@ -1,33 +1,34 @@
+# Compiler and Flags
 CC = gcc
 CFLAGS = -fPIC -I/usr/include
-LDFLAGS = -shared
-LDLIBS = -lpthread
+LDFLAGS = -shared -lpthread -lmosquitto -lsqlite3
 
-# Define all plugins except mqtt_pbac.so
+# Plugins to Build
 PLUGINS = per_message_declaration.so registration_by_message.so registration_by_topic.so
 
+# Default Target
 all: $(PLUGINS)
 
-# Compile mqtt_pbac.o (shared object)
+# Compile mqtt_pbac.o
 mqtt_pbac.o: mqtt_pbac.c mqtt_pbac.h
-        $(CC) $(CFLAGS) -c mqtt_pbac.c -o mqtt_pbac.o
+	$(CC) $(CFLAGS) -c mqtt_pbac.c -o mqtt_pbac.o
 
-# Compile per_message_declaration.so linking with mqtt_pbac.o
+# Compile per_message_declaration.so
 per_message_declaration.so: per_message_declaration.o mqtt_pbac.o
-        $(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+	$(CC) -o $@ $^ $(LDFLAGS)
 
-# Compile registration_by_message.so linking with mqtt_pbac.o
+# Compile registration_by_message.so
 registration_by_message.so: registration_by_message.o mqtt_pbac.o
-        $(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
+	$(CC) -o $@ $^ $(LDFLAGS)
 
-# Compile registration_by_topic.so linking with mqtt_pbac.o and sqlite3
+# Compile registration_by_topic.so
 registration_by_topic.so: registration_by_topic.o mqtt_pbac.o
-        $(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS) -lsqlite3
+	$(CC) -o $@ $^ $(LDFLAGS)
 
+# Pattern Rule for .o Files
 %.o: %.c mqtt_pbac.h
-        $(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# Clean target
+# Clean Up
 clean:
-        rm -f *.o *.so
-
+	rm -f *.o *.so

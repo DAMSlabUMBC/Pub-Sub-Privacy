@@ -1,4 +1,4 @@
-/* gdpr_plugin.c */
+/* gdpr_rights_plugin.c */
 
 #include <mosquitto.h>
 #include <mosquitto_broker.h>
@@ -14,8 +14,18 @@
 static sqlite3 *db = NULL;
 static pthread_mutex_t db_mutex;
 
+/* Topic definitions */
+#define RR_TOPIC "RR"
+#define RRS_TOPIC_PREFIX "RRS/"   // Subscriber-Keyed Right Request topic
+#define RSYS_TOPIC "RSYS"
+#define RN_TOPIC "RN"
+#define RNP_TOPIC_PREFIX "RNP/"   // Publisher-Keyed Right Notification topic
+
+/* Function Declarations */
+void handle_rights_invocation(const char *publisher_id, struct mosquitto_evt_message *ed);
+
 /* Initialize the database and create tables if they don't exist */
-int init_database()
+int init_database(const char *db_path)
 {
     int rc;
     char *errmsg = NULL;
@@ -33,7 +43,7 @@ int init_database()
         "purpose TEXT,"
         "PRIMARY KEY (publisher_id, subscriber_id, topic, purpose));";
 
-    rc = sqlite3_open("gdpr_plugin.db", &db);
+    rc = sqlite3_open(db_path, &db);
     if (rc != SQLITE_OK)
     {
         fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
@@ -163,24 +173,33 @@ void get_subscribers_of_publisher(const char *publisher_id, char ***subscriber_i
     pthread_mutex_unlock(&db_mutex);
 }
 
-/* Extract purpose from properties */
-char *get_purpose_from_properties(const mosquitto_property *props)
+/* Extract GDPR information from properties */
+char *get_gdpr_info_from_properties(const mosquitto_property *props)
 {
-    // Currently returns error find out why
-    const mosquitto_property *prop = props;
-    while (prop)
+    const mosquitto_property *prop = NULL;
+
+    for (prop = props; prop != NULL; prop = mosquitto_property_next(prop))
     {
-        if (prop->identifier == MQTT_PROP_USER_PROPERTY)
+        if (mosquitto_property_identifier(prop) == MQTT_PROP_USER_PROPERTY)
         {
-            if (prop->name && prop->value)
+            char *name = NULL;
+            char *value = NULL;
+
+            prop = mosquitto_property_read_string_pair(prop, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+            if (name && value && strcmp(name, "GDPR-Information") == 0)
             {
-                if (strcmp(prop->name, "Purpose") == 0)
-                {
-                    return strdup(prop->value);
-                }
+                char *gdpr_info = strdup(value);
+                free(name);
+                free(value);
+                return gdpr_info;
+            }
+            if (name) free(name);
+            if (value) free(value);
+            if (!prop)
+            {
+                break;
             }
         }
-        prop = prop->next;
     }
     return NULL;
 }
@@ -190,11 +209,29 @@ int on_acl_check(int event, void *event_data, void *userdata)
 {
     struct mosquitto_evt_acl_check *ed = event_data;
     const char *client_id = mosquitto_client_id(ed->client);
-    const char *topic = ed->topic;
     int access = ed->access;
     const mosquitto_property *props = ed->properties;
 
-    /* Preform access control checks here based on rights */
+    if (access == MOSQ_ACL_SUBSCRIBE)
+    {
+        /* Intercept SUBSCRIBE messages to extract GDPR information */
+        char *gdpr_info = get_gdpr_info_from_properties(props);
+        if (gdpr_info)
+        {
+            /* Store GDPR information for the client */
+            store_client_gdpr_info(client_id, gdpr_info);
+            free(gdpr_info);
+            return MOSQ_ERR_SUCCESS;
+        }
+        else
+        {
+            /* GDPR-Information not provided; reject the subscription */
+            fprintf(stderr, "GDPR-Information not provided in SUBSCRIBE by client '%s'\n", client_id);
+            return MOSQ_ERR_ACL_DENIED;
+        }
+    }
+
+    /* Allow other ACL checks to proceed */
     return MOSQ_ERR_SUCCESS;
 }
 
@@ -206,28 +243,38 @@ int on_message_event(int event, void *event_data, void *userdata)
     const char *topic = ed->topic;
     const mosquitto_property *props = ed->properties;
 
-    /* Extract Purpose and PublisherID from properties */
+    /* Extract Purpose and ClientID (PublisherID) from properties */
     char *purpose = NULL;
     char *publisher_id = NULL;
 
-    const mosquitto_property *prop = props;
-    while (prop)
+    const mosquitto_property *prop = NULL;
+
+    for (prop = props; prop != NULL; prop = mosquitto_property_next(prop))
     {
-        if (prop->identifier == MQTT_PROP_USER_PROPERTY)
+        if (mosquitto_property_identifier(prop) == MQTT_PROP_USER_PROPERTY)
         {
-            if (prop->name && prop->value)
+            char *name = NULL;
+            char *value = NULL;
+
+            prop = mosquitto_property_read_string_pair(prop, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+            if (name && value)
             {
-                if (strcmp(prop->name, "Purpose") == 0)
+                if (strcmp(name, "Purpose") == 0)
                 {
-                    purpose = strdup(prop->value);
+                    purpose = strdup(value);
                 }
-                else if (strcmp(prop->name, "ClientID") == 0)
+                else if (strcmp(name, "ClientID") == 0)
                 {
-                    publisher_id = strdup(prop->value);
+                    publisher_id = strdup(value);
                 }
             }
+            if (name) free(name);
+            if (value) free(value);
+            if (!prop)
+            {
+                break;
+            }
         }
-        prop = prop->next;
     }
 
     if (publisher_id)
@@ -245,49 +292,6 @@ int on_message_event(int event, void *event_data, void *userdata)
     return MOSQ_ERR_SUCCESS;
 }
 
-/* Callback for Control Messages */
-int on_control_event(int event, void *event_data, void *userdata)
-{
-    struct mosquitto_evt_control *ed = event_data;
-    const char *client_id = mosquitto_client_id(ed->client);
-    const char *topic = ed->topic;
-    const mosquitto_property *props = ed->properties;
-
-    if (strcmp(topic, "$CONTROL/gdpr/registration") == 0)
-    {
-        /* Extract GDPR-Info from properties */
-        char *gdpr_info = NULL;
-        const mosquitto_property *prop = props;
-        while (prop)
-        {
-            if (prop->identifier == MQTT_PROP_USER_PROPERTY)
-            {
-                if (prop->name && prop->value)
-                {
-                    if (strcmp(prop->name, "GDPR-Info") == 0)
-                    {
-                        gdpr_info = strdup(prop->value);
-                        break;
-                    }
-                }
-            }
-            prop = prop->next;
-        }
-
-        if (gdpr_info)
-        {
-            store_client_gdpr_info(client_id, gdpr_info);
-            free(gdpr_info);
-        }
-
-        /* Do not forward this message */
-        return MOSQ_ERR_SUCCESS;
-    }
-
-    /* Allow other control messages to be processed normally */
-    return MOSQ_ERR_SUCCESS;
-}
-
 /* Callback for Rights Invocation Messages */
 int on_rights_invocation_event(int event, void *event_data, void *userdata)
 {
@@ -295,7 +299,7 @@ int on_rights_invocation_event(int event, void *event_data, void *userdata)
     const char *publisher_id = mosquitto_client_id(ed->client);
     const char *topic = ed->topic;
 
-    if (strcmp(topic, "$gdpr/rights/system") == 0)
+    if (strcmp(topic, RSYS_TOPIC) == 0)
     {
         /* Handle rights invocation */
         handle_rights_invocation(publisher_id, ed);
@@ -315,29 +319,67 @@ void handle_rights_invocation(const char *publisher_id, struct mosquitto_evt_mes
 
     char *gdpr_right = NULL;
     char *gdpr_filter = NULL;
+    char *response_topic = NULL;         // Changed from const char * to char *
+    void *correlation_data = NULL;       // Changed from const void * to void *
+    uint16_t correlation_data_len = 0;
 
-    /* Extract GDPR-Right and GDPR-Filter from properties */
-    const mosquitto_property *prop = props;
-    while (prop)
+    const mosquitto_property *prop = NULL;
+
+    for (prop = props; prop != NULL; prop = mosquitto_property_next(prop))
     {
-        if (prop->identifier == MQTT_PROP_USER_PROPERTY)
+        int identifier = mosquitto_property_identifier(prop);
+
+        if (identifier == MQTT_PROP_USER_PROPERTY)
         {
-            if (prop->name && prop->value)
+            char *name = NULL;
+            char *value = NULL;
+
+            prop = mosquitto_property_read_string_pair(prop, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+            if (name && value)
             {
-                if (strcmp(prop->name, "GDPR-Right") == 0)
+                if (strcmp(name, "GDPR-Right") == 0)
                 {
-                    gdpr_right = strdup(prop->value);
+                    gdpr_right = strdup(value);
                 }
-                else if (strcmp(prop->name, "GDPR-Filter") == 0)
+                else if (strcmp(name, "GDPR-Filter") == 0)
                 {
-                    gdpr_filter = strdup(prop->value);
+                    gdpr_filter = strdup(value);
                 }
             }
+            if (name) free(name);
+            if (value) free(value);
+            if (!prop)
+            {
+                break;
+            }
         }
-        prop = prop->next;
+        else if (identifier == MQTT_PROP_RESPONSE_TOPIC)
+        {
+            prop = mosquitto_property_read_string(prop, MQTT_PROP_RESPONSE_TOPIC, &response_topic, false);
+            if (!response_topic)
+            {
+                fprintf(stderr, "Failed to read response topic\n");
+            }
+            if (!prop)
+            {
+                break;
+            }
+        }
+        else if (identifier == MQTT_PROP_CORRELATION_DATA)
+        {
+            prop = mosquitto_property_read_binary(prop, MQTT_PROP_CORRELATION_DATA, &correlation_data, &correlation_data_len, false);
+            if (!correlation_data)
+            {
+                fprintf(stderr, "Failed to read correlation data\n");
+            }
+            if (!prop)
+            {
+                break;
+            }
+        }
     }
 
-    if (gdpr_right)
+    if (gdpr_right && response_topic && correlation_data)
     {
         /* Identify relevant subscribers */
         char **subscriber_ids = NULL;
@@ -362,9 +404,57 @@ void handle_rights_invocation(const char *publisher_id, struct mosquitto_evt_mes
             /* Add PublisherID property */
             mosquitto_property_add_string_pair(&request_props, MQTT_PROP_USER_PROPERTY, "PublisherID", publisher_id);
 
-            /* Publish the request directly to the subscriber */
-            mosquitto_broker_publish(subscriber_ids[i], NULL, 0, NULL, 1, false, request_props);
+            /* Add Correlation Data */
+            mosquitto_property_add_binary(&request_props, MQTT_PROP_CORRELATION_DATA, correlation_data, correlation_data_len);
+
+            /* Publish the request to the subscriber's RRS topic */
+            char rrs_topic[256];
+            snprintf(rrs_topic, sizeof(rrs_topic), "%s%s", RRS_TOPIC_PREFIX, subscriber_ids[i]);
+
+            int ret = mosquitto_broker_publish(
+                NULL,
+                rrs_topic,
+                0,
+                NULL,
+                1,
+                false,
+                request_props);
+
+            if (ret != MOSQ_ERR_SUCCESS)
+            {
+                fprintf(stderr, "Failed to publish right invocation to subscriber '%s'\n", subscriber_ids[i]);
+            }
+
+            mosquitto_property_free_all(&request_props);
         }
+
+        /* Send broker's own GDPR information to the publisher via response topic */
+        char *broker_gdpr_info = get_gdpr_information("broker_id"); // Replace "broker_id" with actual broker ID if available
+
+        mosquitto_property *response_props = NULL;
+        mosquitto_property_add_binary(&response_props, MQTT_PROP_CORRELATION_DATA, correlation_data, correlation_data_len);
+
+        if (broker_gdpr_info)
+        {
+            mosquitto_property_add_string_pair(&response_props, MQTT_PROP_USER_PROPERTY, "GDPR-Information", broker_gdpr_info);
+            free(broker_gdpr_info);
+        }
+
+        int ret = mosquitto_broker_publish(
+            NULL,
+            response_topic,
+            0,
+            NULL,
+            1,
+            false,
+            response_props);
+
+        if (ret != MOSQ_ERR_SUCCESS)
+        {
+            fprintf(stderr, "Failed to send GDPR info to publisher '%s'\n", publisher_id);
+        }
+
+        mosquitto_property_free_all(&response_props);
 
         /* Clean up */
         for (int i = 0; i < subscriber_count; i++)
@@ -377,42 +467,67 @@ void handle_rights_invocation(const char *publisher_id, struct mosquitto_evt_mes
         {
             free(gdpr_filter);
         }
+        if (response_topic)
+        {
+            free(response_topic);
+        }
+        if (correlation_data)
+        {
+            free(correlation_data);
+        }
+    }
+    else
+    {
+        fprintf(stderr, "Incomplete GDPR rights invocation from publisher '%s'\n", publisher_id);
     }
 }
 
 /* Plugin version */
 int mosquitto_plugin_version(int supported_version_count, const int *supported_versions)
 {
-	int i;
+    int i;
 
-	for(i=0; i<supported_version_count; i++){
-		if(supported_versions[i] == 5){
-			return 5;
-		}
-	}
-	return -1;
+    for (i = 0; i < supported_version_count; i++)
+    {
+        if (supported_versions[i] == 5)
+        {
+            return 5;
+        }
+    }
+    return -1;
 }
 
 /* Plugin initialization function */
 int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **userdata, struct mosquitto_opt *options, int option_count)
 {
     int rc;
+    char *db_path = NULL; 
 
     /* Initialize mutex */
     pthread_mutex_init(&db_mutex, NULL);
 
+    /* Read the database path from the environment variable */
+    db_path = getenv("GDPR_PLUGIN_DB_PATH");
+
+    if (db_path == NULL)
+    {
+        fprintf(stderr, "Database path not specified in configuration.\n");
+        return MOSQ_ERR_UNKNOWN;
+    }
+
     /* Initialize database */
-    rc = init_database();
+    rc = init_database(db_path);
     if (rc != SQLITE_OK)
     {
         return MOSQ_ERR_UNKNOWN;
     }
+    
+    free(db_path);
 
     /* Register callbacks */
     mosquitto_callback_register(identifier, MOSQ_EVT_ACL_CHECK, on_acl_check, NULL, NULL);
     mosquitto_callback_register(identifier, MOSQ_EVT_MESSAGE, on_message_event, NULL, NULL);
-    mosquitto_callback_register(identifier, MOSQ_EVT_CONTROL, on_control_event, "$CONTROL/gdpr/#", NULL);
-    mosquitto_callback_register(identifier, MOSQ_EVT_MESSAGE, on_rights_invocation_event, "$gdpr/rights/system", NULL);
+    mosquitto_callback_register(identifier, MOSQ_EVT_MESSAGE, on_rights_invocation_event, NULL, NULL);
 
     return MOSQ_ERR_SUCCESS;
 }

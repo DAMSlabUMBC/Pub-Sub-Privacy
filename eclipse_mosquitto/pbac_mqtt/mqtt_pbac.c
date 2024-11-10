@@ -200,10 +200,38 @@ void store_mp(mp_entry_t **list, const char *topic, const char *mp_filter)
     new_entry->next = NULL;
 
     pthread_mutex_lock(&pbac_mutex);
-    new_entry->
+    new_entry->next = *list;
+    *list = new_entry;
+    pthread_mutex_unlock(&pbac_mutex);
+}
+
+/* Removes a MP entry */
+void remove_mp_entry(mp_entry_t **list, const char *topic)
+{
+    pthread_mutex_lock(&pbac_mutex);
+    mp_entry_t *current = *list;
+    mp_entry_t *prev = NULL;
+
+    while (current) {
+        if (strcmp(current->topic, topic) == 0) {
+            if (prev) {
+                prev->next = current->next;
+            } else {
+                *list = current->next;
+            }
+            free(current->topic);
+            free(current->mp_filter);
+            free_expanded_purposes(current->mp_purposes, current->mp_purpose_count);
+            free(current);
+            break;
+        }
+        prev = current;
+        current = current->next;
+    }
+    pthread_mutex_unlock(&pbac_mutex);
+}
 
 
-)
 /* Frees the entire MP list */
 void free_mp_list(mp_entry_t **list)
 {
@@ -211,7 +239,6 @@ void free_mp_list(mp_entry_t **list)
     mp_entry_t *current = *list;
     while (current) {
         mp_entry_t *next = current->next;
-        free(current->client_id);
         free(current->topic);
         free(current->mp_filter);
         free_expanded_purposes(current->mp_purposes, current->mp_purpose_count);
@@ -223,36 +250,36 @@ void free_mp_list(mp_entry_t **list)
 }
 
 /* Checks if a MP is compatiable with an SP*/
-int check_purpose_compatibility(const char *topic, const char *client_id, const char *mp_filter) 
-{ 
-    int mp_purpose_count = 0; 
-    char **mp_purposes = expand_purpose_filter(mp_filter, &mp_purpose_count); 
-    if (!mp_purposes && mp_purpose_count > 0) { 
-        return 0; // Not compatible 
-    } 
-    pthread_mutex_lock(&pbac_mutex); 
+int check_purpose_compatibility(const char *topic, const char *client_id, const char *mp_filter)
+{
+    int mp_purpose_count = 0;
+    char **mp_purposes = expand_purpose_filter(mp_filter, &mp_purpose_count);
+    if (!mp_purposes && mp_purpose_count > 0) {
+        return 0; // Not compatible
+    }
+    pthread_mutex_lock(&pbac_mutex);
     
-    /* Find SP entries matching the topic and client_id */ 
-    sp_entry_t *current_sp = sp_list; 
-    while (current_sp) { 
-        if (strcmp(current_sp->client_id, client_id) == 0 && strcmp(current_sp->topic, topic) == 0) { 
-            /* Compare purposes */ 
+    /* Find SP entries matching the topic and client_id */
+    sp_entry_t *current_sp = sp_list;
+    while (current_sp) {
+        if (strcmp(current_sp->client_id, client_id) == 0 && strcmp(current_sp->topic, topic) == 0) {
+            /* Compare purposes */
             for (int i = 0; i < mp_purpose_count; i++) {
                  for (int j = 0; j < current_sp->sp_purpose_count; j++) {
                      if (strcmp(mp_purposes[i], current_sp->sp_purposes[j]) == 0) {
-                         /* Purposes match; allow */ 
+                         /* Purposes match; allow */
                          pthread_mutex_unlock(&pbac_mutex);
                          free_expanded_purposes(mp_purposes, mp_purpose_count);
-                         return 1; // Compatible 
-                    } 
-                } 
-            } 
-        } 
-        current_sp = current_sp->next; 
+                         return 1; // Compatible
+                     }
+                }
+            }
+        }
+        current_sp = current_sp->next;
     }
     pthread_mutex_unlock(&pbac_mutex);
-    free_expanded_purposes(mp_purposes, mp_purpose_count); 
+    free_expanded_purposes(mp_purposes, mp_purpose_count);
                            
-    /* No compatible SP found */ 
-    return 0; // Not compatible 
+    /* No compatible SP found */
+    return 0; // Not compatible
 }

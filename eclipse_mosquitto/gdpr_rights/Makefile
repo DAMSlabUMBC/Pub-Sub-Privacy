@@ -1,19 +1,19 @@
 # Makefile for compiling gdpr_rights_plugin.c into gdpr_rights_plugin.so
 
 CC = gcc
-CFLAGS = -fPIC -I/usr/include -I/usr/include/mosquitto
-LDFLAGS = -shared
-LDLIBS = -lpthread -lsqlite3
+CFLAGS = -fPIC -I/usr/include
+LDFLAGS = -shared -lpthread -lsqlite3 -lmosquitto
+TARGET = gdpr_rights_plugin.so
+SOURCES = gdpr_rights_plugin.c
+OBJECTS = $(SOURCES:.c=.o)
 
-PLUGIN = gdpr_rights_plugin.so
+all: $(TARGET)
 
-all: $(PLUGIN)
+$(TARGET): $(OBJECTS)
+	$(CC) -o $@ $(OBJECTS) $(LDFLAGS)
 
-$(PLUGIN): gdpr_rights_plugin.o
-	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
-
-gdpr_rights_plugin.o: gdpr_rights_plugin.c
+%.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o *.so
+	rm -f $(OBJECTS) $(TARGET)

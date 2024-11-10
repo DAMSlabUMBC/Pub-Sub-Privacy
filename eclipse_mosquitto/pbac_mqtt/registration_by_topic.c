@@ -15,17 +15,22 @@ extern sp_entry_t *sp_list;
 extern mp_entry_t *mp_list;
 extern pthread_mutex_t pbac_mutex;
 
-/* SQLite database handle */
-sqlite3 *db = NULL;  // Declare 'db' globally
+/* Global Variables */
+static sqlite3 *db = NULL;
+static pthread_mutex_t db_mutex;
 
 /* Prefixes for MP and SP registration topics */
 #define MP_REGISTRATION_PREFIX "$priv/MP_registration/"
 #define SP_REGISTRATION_PREFIX "$priv/SP_registration/"
 
 /* Function to initialize the SQLite database */
-int initialize_database()
+int initialize_database(const char *db_path)
 {
-    int rc = sqlite3_open(":memory:", &db);
+    int rc;
+    char *errmsg = NULL;
+
+    /* Use the provided db_path instead of hardcoded filename */
+    rc = sqlite3_open(db_path, &db);
     if (rc != SQLITE_OK) {
         mosquitto_log_printf(MOSQ_LOG_ERR, "Cannot open SQLite database: %s", sqlite3_errmsg(db));
         return rc;
@@ -34,7 +39,6 @@ int initialize_database()
     const char *create_table_sql = "CREATE TABLE subscribers ("
                                    "client_id TEXT,"
                                    "topic TEXT);";
-    char *errmsg = NULL;
     rc = sqlite3_exec(db, create_table_sql, NULL, NULL, &errmsg);
     if (rc != SQLITE_OK) {
         mosquitto_log_printf(MOSQ_LOG_ERR, "Cannot create table: %s", errmsg);
@@ -191,16 +195,30 @@ int mosquitto_plugin_version(int supported_version_count, const int *supported_v
 int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **userdata, struct mosquitto_opt *options, int option_count)
 {
     int rc;
+    char *db_path = NULL;
 
-    /* Initialize the mutex */
-    pthread_mutex_init(&pbac_mutex, NULL);
+    /* Initialize mutex */
+    pthread_mutex_init(&db_mutex, NULL);
 
-    /* Initialize the SQLite database */
-    rc = initialize_database();
-    if (rc != SQLITE_OK) {
+    /* Read the database path from the environment variable */
+    db_path = getenv("GDPR_PLUGIN_DB_PATH");
+
+    if (db_path == NULL)
+    {
+        fprintf(stderr, "Database path not specified in configuration.\n");
         return MOSQ_ERR_UNKNOWN;
     }
 
+    /* Initialize database with the specified path */
+    rc = initialize_database(db_path);
+    if (rc != SQLITE_OK)
+    {
+        free(db_path);
+        return MOSQ_ERR_UNKNOWN;
+    }
+
+    free(db_path);
+    
     /* Register the ACL check callback */
     rc = mosquitto_callback_register(identifier, MOSQ_EVT_ACL_CHECK, callback_acl_check, NULL, NULL);
     if (rc != MOSQ_ERR_SUCCESS) return rc;
