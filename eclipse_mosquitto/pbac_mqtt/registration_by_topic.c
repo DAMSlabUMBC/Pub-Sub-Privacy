@@ -75,45 +75,54 @@ int call_for_acl_check(int event, void *event_data, void *userdata)
         if (strncmp(topic, MP_REGISTRATION_PREFIX, strlen(MP_REGISTRATION_PREFIX)) == 0) {
             /* MP Registration */
             const char *remaining_topic = topic + strlen(MP_REGISTRATION_PREFIX);
-            char *topic_copy = strdup(remaining_topic);
-            char *mp_topic = strtok(topic_copy, "/");
-            char *mp_filter = strtok(NULL, "/");
+            char *bracket_start = strchr(remaining_topic, '[');
+            char *bracket_end = strchr(remaining_topic, ']');
+            
+            if (bracket_start && bracket_end && bracket_end > bracket_start) {
+            /* Extract the topic and purpose */
+        	size_t topic_len = bracket_start - remaining_topic;
+            	char *mp_topic = strndup(remaining_topic, topic_len);
 
-            if (mp_topic && mp_filter) {
-                /* Store the MP */
-                store_mp(&mp_list, mp_topic, mp_filter);
-            } else if (mp_topic && !mp_filter) {
-                /* If no MP is provided, use "*" */
-                store_mp(&mp_list, mp_topic, "*");
+            	size_t purpose_len = bracket_end - bracket_start - 1;
+            	char *mp_filter = strndup(bracket_start + 1, purpose_len);
+
+            	/* Store the MP */
+            	store_mp(&mp_list, mp_topic, mp_filter);
+
+            	free(mp_topic);
+            	free(mp_filter);
+            } else {
+            	/* Invalid format */
+            	return MOSQ_ERR_ACL_DENIED;
             }
-
-            free(topic_copy);
 
             return MOSQ_ERR_SUCCESS; // Allow the publish to the registration topic
         } else if (strncmp(topic, SP_REGISTRATION_PREFIX, strlen(SP_REGISTRATION_PREFIX)) == 0) {
             /* SP Registration */
             const char *remaining_topic = topic + strlen(SP_REGISTRATION_PREFIX);
-            char *topic_copy = strdup(remaining_topic);
-            char *sp_topic = strtok(topic_copy, "/");
-            char *sp_filter = strtok(NULL, "/");
+            char *bracket_start = strchr(remaining_topic, '[');
+            char *bracket_end = strchr(remaining_topic, ']');
+             
+            if (bracket_start && bracket_end && bracket_end > bracket_start) {
+            	 /* Extract the topic and purpose */
+        	size_t topic_len = bracket_start - remaining_topic;
+        	char *sp_topic = strndup(remaining_topic, topic_len);
 
-            if (sp_topic && sp_filter) {
-                /* Store the SP */
-                store_sp(&sp_list, client_id, sp_topic, sp_filter);
-                store_subscriber(client_id, sp_topic); // Store in SQLite
-            } else if (sp_topic && !sp_filter) {
-                /* No SP filter provided, deny registration */
-                free(topic_copy);
+       		size_t purpose_len = bracket_end - bracket_start - 1;
+        	char *sp_filter = strndup(bracket_start + 1, purpose_len);
+	        
+		/* Store the SP */
+        	store_sp(&sp_list, client_id, sp_topic, sp_filter);
+        	store_subscriber(client_id, sp_topic);
+
+    	        free(sp_topic);
+        	free(sp_filter);
+             } else {
+              /* Invalid format */
                 return MOSQ_ERR_ACL_DENIED;
-            }
+             }
 
-            free(topic_copy);
-
-            return MOSQ_ERR_SUCCESS; // Allow the publish to the registration topic
-        } else {
-            /* Regular publish to other topics */
-            return MOSQ_ERR_SUCCESS; // Allow the publish
-        }
+             return MOSQ_ERR_SUCCESS; // Allow the publish
     } else if (access == MOSQ_ACL_SUBSCRIBE) {
         /* Handle SUBSCRIBE operations */
         /* Check if the subscriber has registered an SP for this topic */

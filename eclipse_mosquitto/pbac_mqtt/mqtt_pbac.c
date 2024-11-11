@@ -265,8 +265,10 @@ int check_purpose_compatibility(const char *topic, const char *client_id, const 
         if (strcmp(current_sp->client_id, client_id) == 0 && strcmp(current_sp->topic, topic) == 0) {
             /* Compare purposes */
             for (int i = 0; i < mp_purpose_count; i++) {
-                 for (int j = 0; j < current_sp->sp_purpose_count; j++) {
-                     if (strcmp(mp_purposes[i], current_sp->sp_purposes[j]) == 0) {
+                const char *mp_purpose = mp_purposes[i]; 
+		for (int j = 0; j < current_sp->sp_purpose_count; j++) {
+                     const char *sp_purpose = current_sp->sp_purposes[j];
+                     if (strncmp(mp_purpose, sp_purpose, strlen(sp_purpose)) == 0 && (mp_purpose[strlen(sp_purpose)] == '/' || mp_purpose[strlen(sp_purpose)] == '\0')) {
                          /* Purposes match; allow */
                          pthread_mutex_unlock(&pbac_mutex);
                          free_expanded_purposes(mp_purposes, mp_purpose_count);

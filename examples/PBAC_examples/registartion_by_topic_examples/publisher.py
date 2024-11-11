@@ -17,7 +17,7 @@ def publisher():
         print("[Publisher] Connected with result code {}".format(rc))
 
         # Register PF-MP for the topic via registration topic
-        registration_topic = "$priv/MP_registration/f{TOPIC}/[{PF_MP}]"
+        registration_topic = "$priv/MP_registration/{TOPIC}/[{PF_MP}]"
         client.publish(registration_topic, payload='', qos=1)
         print("[Publisher] Registered PF-MP {PF_MP} for topic {TOPIC} via topic {registration_topic}")
         # Publish a message after registering PF-MP

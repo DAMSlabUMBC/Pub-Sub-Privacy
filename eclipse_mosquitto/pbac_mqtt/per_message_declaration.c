@@ -35,8 +35,10 @@ int callback_acl_check(int event, void *event_data, void *userdata)
                 char *value = NULL;
                 mosquitto_property_read_string_pair((mosquitto_property *)prop, MQTT_PROP_USER_PROPERTY, &key, &value, false);
 
-                if (strcmp(key, "SP") == 0) {
-                    sp_filter = strdup(value);
+                if (strcmp(key, "PF-SP") == 0) {
+                   sp_filter = strdup(value);
+		   mosquitto_free(key);
+                    mosquitto_free(value);
                 }
 
                 mosquitto_free(key);
@@ -46,7 +48,7 @@ int callback_acl_check(int event, void *event_data, void *userdata)
             }
             prop = mosquitto_property_next(prop);
         }
-
+w
         if (sp_filter) {
             /* Store the SP */
             store_sp(&sp_list, client_id, topic, sp_filter);
@@ -68,9 +70,11 @@ int callback_acl_check(int event, void *event_data, void *userdata)
                 char *value = NULL;
                 mosquitto_property_read_string_pair((mosquitto_property *)prop, MQTT_PROP_USER_PROPERTY, &key, &value, false);
 
-                if (strcmp(key, "MP") == 0) {
+                if (strcmp(key, "PF-MP") == 0) {
                     mp_filter = strdup(value);
-                }
+                    mosquitto_free(key);
+                    mosquitto_free(value);
+		}
 
                 mosquitto_free(key);
                 mosquitto_free(value);
@@ -86,35 +90,41 @@ int callback_acl_check(int event, void *event_data, void *userdata)
         }
 
         /* Store the MP per topic */
-        store_mp(&mp_list, topic, mp_filter);
         free(mp_filter);
 
         return MOSQ_ERR_SUCCESS; // Allow the publish
     } else if (access == MOSQ_ACL_READ) {
         /* Handle READ operation (message delivery to subscriber) */
         /* Retrieve the MP associated with the topic */
-        char *mp_filter = NULL;
+        const mosquitto_property *msg_properties = ed->properties;
+	char *mp_filter = NULL;
 
         pthread_mutex_lock(&pbac_mutex);
 
         /* Find the MP for the topic */
-        mp_entry_t *mp_entry = mp_list;
-        while (mp_entry) {
-            if (strcmp(mp_entry->topic, topic) == 0) {
-                mp_filter = strdup(mp_entry->mp_filter);
-                break;
+	while (msg_properties) {
+            if (mosquitto_property_identifier(msg_properties) == MQTT_PROP_USER_PROPERTY) {
+                char *key = NULL;    // change
+                char *value = NULL;  // change
+                mosquitto_property_read_string_pair((mosquitto_property *)msg_properties, MQTT_PROP_USER_PROPERTY, &key, &value, false);
+
+                if (strcmp(key, "PF-MP") == 0) {  
+                    mp_filter = strdup(value);  
+                    mosquitto_free(key);        
+                    mosquitto_free(value);      
+                    break;                      
+                }
+
+                mosquitto_free(key);
+                mosquitto_free(value);
             }
-            mp_entry = mp_entry->next;
+            msg_properties = mosquitto_property_next(msg_properties);
         }
-
-        pthread_mutex_unlock(&pbac_mutex);
-
+        
         if (!mp_filter) {
-            /* No MP found for this topic */
-            mp_filter = strdup("");
+            return MOSQ_ERR_ACL_DENIED
         }
 
-        /* Check purpose compatibility */
         int compatible = check_purpose_compatibility(topic, client_id, mp_filter);
 
         free(mp_filter);

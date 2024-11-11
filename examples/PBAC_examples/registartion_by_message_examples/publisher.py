@@ -20,7 +20,7 @@ def publisher():
 
         # Register PF-MP for the topic with the purpose filter
         properties = mqtt.Properties(mqtt.PacketTypes.PUBLISH)
-        properties.UserProperty = [("PF-MP", PF_MP)]
+        properties.UserProperty = [("PF-MP:{TOPIC}", PF_MP)]
         client.publish(REGISTRATION_TOPIC, payload='', qos=1, properties=properties)
         print("[Publisher] Registered PF-MP '{}' for topic '{}'".format(PF_MP, TOPIC))
 

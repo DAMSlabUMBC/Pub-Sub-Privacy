@@ -150,7 +150,7 @@ int call_acl_check(int event, void *event_data, void *userdata)
 
                 mosquitto_property_read_string_pair(prop, MQTT_PROP_USER_PROPERTY, &key, &value, false);
 
-                if (key && value && strcmp(key, "SP") == 0) {
+                if (key && value && strcmp(key, "PF-SP") == 0) {
                     sp_filter = strdup(value);
                     mosquitto_free(key);
                     mosquitto_free(value);
@@ -191,11 +191,11 @@ int call_acl_check(int event, void *event_data, void *userdata)
                     mosquitto_property_read_string_pair(prop, MQTT_PROP_USER_PROPERTY, &key, &value, false);
 
                     if (key && value) {
-                        if (strcmp(key, "MP") == 0) {
+                        if (strcmp(key, "PF-MP") == 0) {
                             mp_topics = strdup(value);
-                        } else if (strcmp(key, "MP-Filter") == 0) {
+                        } else if (strcmp(key, "PF-MP-Filter") == 0) {
                             mp_filter = strdup(value);
-                        } else if (strcmp(key, "MP-Retroactive") == 0) {
+                        } else if (strcmp(key, "PF-ApplyRetroactive") == 0) {
                             if (strcmp(value, "true") == 0) {
                                 retroactive = true;
                             }
