@@ -34,18 +34,18 @@ Pub-Sub-Privacy is a customized MQTT broker (Eclipse Mosquitto) that explores en
       docker build -t mosquitto-custom .   
       ```
 ### Executing program
+Run the GDPR-Compliant Mosquitto Broker
 
-* Run the GDPR-Compliant Mosquitto Broker
 Start the Mosquitto broker with GDPR compliance built in
 ```
 docker run -d --name gdpr-mosquitto-broker -p 1883:1883 mosquitto-custom
 ```
-* Verify the broker is running
+Verify the broker is running
 ```docker ps```
 You should see ``` gdpr-mosquitto-broker``` listed as a running docker container
-* Connect to the Broker
+Connect to the Broker
 Use any MQTT client in any language to publish and subscibe to topic via ```(your server):1883 ```
-* Sample GDPR Compliance
+Sample GDPR Compliance
 Follow our examples in the ```Examples``` folder for GDPR rights appliable in MQTT
 ## Help
 
