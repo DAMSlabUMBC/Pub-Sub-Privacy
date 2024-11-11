@@ -1,6 +1,6 @@
 # Pub-Sub-Privacy
 
-Pub-Sub-Privacy is a customized MQTT broker (Eclipse Mosquitto) that explores enabling GDPR compliance in MQTT through the use of plugins. In this project we extend the Mosquitto broker to handle GDPR rights in the context of how they can be applied in MQTT.
+Built in GDPR compliance in a MQTT broker
 
 ## Description
 
@@ -10,14 +10,28 @@ Pub-Sub-Privacy is a customized MQTT broker (Eclipse Mosquitto) that explores en
 
 ### Dependencies
 
-* Describe any prerequisites, libraries, OS version, etc., needed before installing program.
-* ex. Windows 10
+- **Docker**: Ensure you have Docker installed .
+- **Basic MQTT Knowledge**: Familiarity with MQTT protocol, MQTT brokers, and MQTT clients.
+- **Operating System**: Compatible with any OS that support Docker.
+
 
 ### Installing
 
-* How/where to download your program
-* Any modifications needed to be made to files/folders
+   1. **Clone the Repository**
 
+      Clone the project repository to your local machine:
+
+      ```bash
+      git clone https://github.com/DAMSlabUMBC/pub-sub-privacy.git
+      cd pub-sub-privacy/eclipse_mosquitto
+   2. **Build the Custom Mosquitto Docker Image**
+
+      Build the Docker image with the custom plugins included. The Dockerfile is configured to 
+      compile the plugins and set up the broker.
+
+      ```bash
+      docker build -t mosquitto-custom .   
+  
 ### Executing program
 
 * How to run the program
