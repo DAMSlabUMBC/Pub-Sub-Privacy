@@ -21,51 +21,70 @@ Pub-Sub-Privacy is a customized MQTT broker (Eclipse Mosquitto) that explores en
 
       Clone the project repository to your local machine:
 
-      ```bash
+      ```
       git clone https://github.com/DAMSlabUMBC/pub-sub-privacy.git
       cd pub-sub-privacy/eclipse_mosquitto
+      ```
    2. **Build the Custom Mosquitto Docker Image**
 
       Build the Docker image with the custom plugins included. The Dockerfile is configured to 
       compile the plugins and set up the broker.
 
-      ```bash
+      ```
       docker build -t mosquitto-custom .   
-  
+      ```
 ### Executing program
 
 * Run the GDPR-Compliant Mosquitto Broker
-* Step-by-step bullets
+Start the Mosquitto broker with GDPR compliance built in
 ```
 docker run -d --name gdpr-mosquitto-broker -p 1883:1883 mosquitto-custom
-
 ```
-
+* Verify the broker is running
+```docker ps```
+You should see ``` gdpr-mosquitto-broker``` listed as a running docker container
+* Connect to the Broker
+Use any MQTT client in any language to publish and subscibe to topic via ```(your server):1883 ```
+* Sample GDPR Compliance
+Follow our examples in the ```Examples``` folder for GDPR rights appliable in MQTT
 ## Help
 
-Any advise for common problems or issues.
-```
-command to run if program contains helper info
-```
+If you encounter issues, consider the following troubleshooting steps:
+* Check Docker Logs
+  View the docker logs to find any errors
+  ```docker logs gdpr-mosquitto-broker```
+* Acess the container shell to find errors
+  ```docker exec -it gdpr-mosquitto-broker /bin/bash```
+* Rebuild the image 
 
 ## Authors
 
-Contributors names and contact info
+Christian Badolato  
+[@DomPizzie](https://twitter.com/dompizzie)
 
-ex. Dominique Pizzie  
-ex. [@DomPizzie](https://twitter.com/dompizzie)
+Nathan Samson  
+[@bostesa](https://www.linkedin.com/in/nathan-samson-bostesa/)
+
+Yael C  
+[@DomPizzie](https://twitter.com/dompizzie)
+
+Matt Nyandjo  
+[@DomPizzie](https://twitter.com/dompizzie)
+
+Tobechi Ukairo  
+[@DomPizzie](https://twitter.com/dompizzie)
+
+Roberto Yus  
+[@DomPizzie](https://twitter.com/dompizzie)
 
 ## Version History
 
-* 0.2
-    * Various bug fixes and optimizations
-    * See [commit change]() or See [release history]()
 * 0.1
     * Initial Release
 
 ## License
 
-This project is licensed under the [NAME HERE] License - see the LICENSE.md file for details
+This project is licensed under the MIT License - see the LICENSE.md file for details
 
 ## Acknowledgments
 
