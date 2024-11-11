@@ -52,9 +52,13 @@ Follow our examples in the ```Examples``` folder for GDPR rights appliable in MQ
 If you encounter issues, consider the following troubleshooting steps:
 * Check Docker Logs
   View the docker logs to find any errors
-  ```docker logs gdpr-mosquitto-broker```
+  ```
+  docker logs gdpr-mosquitto-broker
+  ```
 * Acess the container shell to find errors
-  ```docker exec -it gdpr-mosquitto-broker /bin/bash```
+  ```
+  docker exec -it gdpr-mosquitto-broker /bin/bash
+  ```
 * Rebuild the image 
 
 ## Authors
