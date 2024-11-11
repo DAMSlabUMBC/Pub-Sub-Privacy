@@ -27,8 +27,8 @@ Pub-Sub-Privacy is a customized MQTT broker (Eclipse Mosquitto) that explores en
       ```
    2. **Build the Custom Mosquitto Docker Image**
 
-      Build the Docker image with the custom plugins included. The Dockerfile is configured to 
-      compile the plugins and set up the broker.
+      Build the Docker image with the custom plugins included. The Dockerfile is configured 
+      to compile the plugins and set up the broker.
 
       ```
       docker build -t mosquitto-custom .   
