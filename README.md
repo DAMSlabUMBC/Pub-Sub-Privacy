@@ -63,26 +63,6 @@ If you encounter issues, consider the following troubleshooting steps:
   ```
 * Rebuild the image 
 
-## Authors
-
-Christian Badolato  
-[@DomPizzie](https://twitter.com/dompizzie)
-
-Nathan Samson  
-[@bostesa](https://www.linkedin.com/in/nathan-samson-bostesa/)
-
-Yael C  
-[@DomPizzie](https://twitter.com/dompizzie)
-
-Matt Nyandjo  
-[@DomPizzie](https://twitter.com/dompizzie)
-
-Tobechi Ukairo  
-[@DomPizzie](https://twitter.com/dompizzie)
-
-Roberto Yus  
-[@DomPizzie](https://twitter.com/dompizzie)
-
 ## Version History
 
 * 0.1
