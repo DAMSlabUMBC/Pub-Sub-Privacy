@@ -41,7 +41,9 @@ Start the Mosquitto broker with GDPR compliance built in
 docker run -d --name gdpr-mosquitto-broker -p 1883:1883 mosquitto-custom
 ```
 #### Verify the broker is running
-```docker ps```
+```
+docker ps
+```
 You should see ``` gdpr-mosquitto-broker``` listed as a running docker container
 #### Connect to the Broker
 Use any MQTT client in any language to publish and subscibe to topic via ```(your server):1883 ```
