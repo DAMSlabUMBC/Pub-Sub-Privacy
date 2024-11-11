@@ -8,6 +8,7 @@
 #include <mosquitto.h>
 #include <mosquitto_broker.h>
 #include <mosquitto_plugin.h>
+#include <mqtt_protocol.h>
 #include "mqtt_pbac.h"
 
 /* External global variables from mqtt_pbac.c */
@@ -74,7 +75,7 @@ int initialize_database(const char *db_path)
 	return rc;
     }
 
-    const char *create_table_sql = "CREATE TABLE subscribers ("
+    const char *create_table_sql = "CREATE TABLE IF NOT EXISTS subscribers ("
                                    "client_id TEXT,"
                                    "topic TEXT,"
                                    "sp_filter TEXT);"; 
@@ -129,7 +130,7 @@ void get_subscribers(const char *topic, char ***client_ids, int *count)
 }
 
 /* Callback for ACL check events */
-int callback_acl_check(int event, void *event_data, void *userdata)
+int call_acl_check(int event, void *event_data, void *userdata)
 {
     struct mosquitto_evt_acl_check *ed = event_data;
     const char *client_id = mosquitto_client_id(ed->client);
@@ -301,8 +302,10 @@ int mosquitto_plugin_version(int supported_version_count, const int *supported_v
 {
 	int i;
 
-	for(i=0; i<supported_version_count; i++){
-		if(supported_versions[i] == 5){
+	for(i = 0; i < supported_version_count; i++) 
+        {
+		if (supported_versions[i] == 5)
+		{
 			return 5;
 		}
 	}
@@ -317,6 +320,7 @@ int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **userdata, st
 
     /* Initialize mutex */
     pthread_mutex_init(&db_mutex, NULL);
+    pthread_mutex_init(&pbac_mutex, NULL);
 
     /* Read the database path from the environment variable */
     db_path = getenv("GDPR_PLUGIN_DB_PATH");
@@ -335,7 +339,7 @@ int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **userdata, st
     }
 
     /* Register the ACL check callback */
-    rc = mosquitto_callback_register(identifier, MOSQ_EVT_ACL_CHECK, callback_acl_check, NULL, NULL);
+    rc = mosquitto_callback_register(identifier, MOSQ_EVT_ACL_CHECK, call_acl_check, NULL, NULL);
     if (rc != MOSQ_ERR_SUCCESS) return rc;
 
     return MOSQ_ERR_SUCCESS;
@@ -349,6 +353,7 @@ int mosquitto_plugin_cleanup(void *userdata, struct mosquitto_opt *options, int 
     free_mp_list(&mp_list);
 
     /* Close SQLite database */
+    pthread_mutex_lock(&db_mutex);
     if (db) {
         sqlite3_close(db);
         db = NULL;
