@@ -34,10 +34,11 @@ Pub-Sub-Privacy is a customized MQTT broker (Eclipse Mosquitto) that explores en
   
 ### Executing program
 
-* How to run the program
+* Run the GDPR-Compliant Mosquitto Broker
 * Step-by-step bullets
 ```
-code blocks for commands
+docker run -d --name gdpr-mosquitto-broker -p 1883:1883 mosquitto-custom
+
 ```
 
 ## Help
