@@ -1,7 +1,7 @@
 import paho.mqtt.client as mqtt
 
 # Broker configuration
-BROKER_ADDRESS = 'localhost'
+BROKER_ADDRESS = 'localhost' # Change
 BROKER_PORT = 1883
 
 # Topic
@@ -12,18 +12,18 @@ PF_SP = 'ads'
 
 def subscriber():
     def on_connect(client, userdata, flags, rc, properties=None):
-        print("[Subscriber] Connected with result code {}".format(rc))
+        print(f"[Subscriber] Connected with result code {rc}")
 
         # Register PF-SP for the topic
         properties = mqtt.Properties(mqtt.PacketTypes.SUBSCRIBE)
         properties.UserProperty = [("PF-SP", PF_SP)]
         client.subscribe(TOPIC, qos=1, options=None, properties=properties)
-        print("[Subscriber] Registered PF-SP '{}' for topic '{}'".format(PF_SP, TOPIC))
+        print(f"[Subscriber] Registered PF-SP '{PF_SP}' for topic '{TOPIC}'")
 
     def on_message(client, userdata, message):
         print("\n[Subscriber] Received message:")
-        print("Topic: {}".format(message.topic))
-        print("Payload: {}".format(message.payload.decode()))
+        print(f"Topic: {message.topic}")
+        print(f"Payload: {messgae.payload.decode()}")
         print("No User Properties in message (PF-MP registered by message).")
 
     client = mqtt.Client(client_id='subscriber', protocol=mqtt.MQTTv5)

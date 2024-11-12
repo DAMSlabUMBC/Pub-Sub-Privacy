@@ -48,7 +48,7 @@ int callback_acl_check(int event, void *event_data, void *userdata)
             }
             prop = mosquitto_property_next(prop);
         }
-w
+
         if (sp_filter) {
             /* Store the SP */
             store_sp(&sp_list, client_id, topic, sp_filter);
@@ -122,7 +122,7 @@ w
         }
         
         if (!mp_filter) {
-            return MOSQ_ERR_ACL_DENIED
+            return MOSQ_ERR_ACL_DENIED;
         }
 
         int compatible = check_purpose_compatibility(topic, client_id, mp_filter);

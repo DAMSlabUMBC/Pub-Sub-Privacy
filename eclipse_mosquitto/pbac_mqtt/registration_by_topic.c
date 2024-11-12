@@ -121,7 +121,7 @@ int call_for_acl_check(int event, void *event_data, void *userdata)
               /* Invalid format */
                 return MOSQ_ERR_ACL_DENIED;
              }
-
+        }
              return MOSQ_ERR_SUCCESS; // Allow the publish
     } else if (access == MOSQ_ACL_SUBSCRIBE) {
         /* Handle SUBSCRIBE operations */

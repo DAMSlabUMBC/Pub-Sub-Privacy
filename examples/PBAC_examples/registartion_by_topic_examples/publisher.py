@@ -2,7 +2,7 @@ import time
 import paho.mqtt.client as mqtt
 
 # Broker configuration
-BROKER_ADDRESS = 'localhost'
+BROKER_ADDRESS = 'localhost' # Change
 BROKER_PORT = 1883
 
 # Topic
@@ -14,17 +14,17 @@ PF_MP = 'ads/{third-party,targeted}'
 
 def publisher():
     def on_connect(client, userdata, flags, rc, properties=None):
-        print("[Publisher] Connected with result code {}".format(rc))
+        print(f"[Publisher] Connected with result code {rc}")
 
         # Register PF-MP for the topic via registration topic
-        registration_topic = "$priv/MP_registration/{TOPIC}/[{PF_MP}]"
+        registration_topic = f"$priv/MP_registration/{TOPIC}/[{PF_MP}]"
         client.publish(registration_topic, payload='', qos=1)
-        print("[Publisher] Registered PF-MP {PF_MP} for topic {TOPIC} via topic {registration_topic}")
+        print(f"[Publisher] Registered PF-MP {PF_MP} for topic {TOPIC} via topic {registration_topic}")
         # Publish a message after registering PF-MP
         time.sleep(1)  # Give time for registration to process
         payload = "Location data payload"
         client.publish(TOPIC, payload, qos=1)
-        print("[Publisher] Published message to topic '{}'".format(TOPIC))
+        print(f"[Publisher] Published message to topic '{TOPIC}'")
 
     client = mqtt.Client(client_id='publisher', protocol=mqtt.MQTTv5)
     client.on_connect = on_connect
