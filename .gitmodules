@@ -1,6 +1,4 @@
 [submodule "dams-mosquitto"]
 	path = dams-mosquitto
 	url = https://github.com/DAMSlabUMBC/dams-mosquitto.git
-	branch = develop
-[submodule "dams-mosquitto/"]
 	branch = remotes/origin/develop
