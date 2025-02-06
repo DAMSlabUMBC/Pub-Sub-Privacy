@@ -1,63 +1,121 @@
-FROM eclipse-mosquitto:latest
+##############################################
+# Stage 1: Build Mosquitto and its plugins
+##############################################
+FROM alpine:latest AS builder
 
-# Install necessary packages including SQLite and debugging tools
-RUN apk update && \
-    apk add --no-cache \
-        build-base \
-        openssl-dev \
-        mosquitto-dev \
-        sqlite-dev \
-        sqlite-libs \
-        gdb \
-        make \
-        musl-dev \
-        libc-dev \
-        strace \
-        bash
+# Install build dependencies (using libxslt instead of xsltproc)
+RUN apk update && apk add --no-cache \
+    build-base \
+    cmake \
+    libxslt \
+    openssl-dev \
+    sqlite-dev \
+    gdb \
+    make \
+    musl-dev \
+    strace \
+    bash \
+    git \
+    c-ares-dev \
+    cjson-dev \
+    util-linux-dev \
+    libwebsockets-dev \
+    linux-headers \
+    ca-certificates \
+    asciidoc \
+    xmlto \
+    cunit-dev \
+    argon2-dev
 
-# Copy Mosquitto headers for plugin development
-ADD mosquitto_headers/mosquitto_plugin.h /usr/include/
-ADD mosquitto_headers/mosquitto_broker.h /usr/include/
-ADD mosquitto_headers/mosquitto.h /usr/include/
+# Copy Mosquitto source and header files
+COPY mosquitto-develop /mosquitto-develop
+COPY mosquitto-develop/include/mosquitto /usr/include/mosquitto
+ADD mosquitto-develop/include/mqtt_protocol.h /usr/include/
+ADD mosquitto-develop/include/mosquittopp.h /usr/include/
+ADD mosquitto-develop/include/mosquitto_plugin.h /usr/include/
+ADD mosquitto-develop/include/mosquitto_broker.h /usr/include/
+ADD mosquitto-develop/include/mosquitto.h /usr/include/
 
-# Debug step: List contents of the headers directory
-RUN ls -l /usr/include/
+WORKDIR /mosquitto-develop
 
-# Set up build directory for plugins
-RUN mkdir -p /build/intent_plugin
-RUN mkdir -p /build/gdpr_plugin
+# Configure, build, and install Mosquitto
+RUN cmake -DWITH_WEBSOCKETS=ON \
+          -DWITH_PLUGINS=ON \
+          -DWITH_SYSTEMD=OFF \
+          -DWITH_APPS=OFF \
+          -DWITH_TESTS=OFF \
+          -DWITH_EXAMPLES=OFF \
+          -DWITH_DOCS=OFF \
+          -DCMAKE_INSTALL_PREFIX=/usr/local . && \
+    make && \
+    make install && \
+    cp src/mosquitto /usr/local/sbin/mosquitto
 
-# Copy plugin source files and Makefile for plugins
-ADD pbac_mqtt/  /build/intent_plugin/
-ADD gdpr_rights/ /build/gdpr_plugin/
+# (Optional) Verify that headers are installed
+RUN ls /usr/local/include/mosquitto.h && \
+    ls /usr/local/include/mosquitto_broker.h && \
+    ls /usr/local/include/mosquitto_plugin.h
 
-# Set working directory for intent management plugin and build
+# Prepare directories for plugin builds and installation.
+# We install plugins into /usr/local/lib/mosquitto/plugins.
+RUN mkdir -p /build/intent_plugin /build/gdpr_plugin /usr/local/lib/mosquitto/plugins
+
+# Copy plugin source code into the builder stage
+COPY pbac_mqtt/ /build/intent_plugin/
+COPY gdpr_rights/ /build/gdpr_plugin/
+
+# Build the Intent Plugin and copy its plugins into the designated directory
 WORKDIR /build/intent_plugin
-RUN make
+RUN make && \
+    cp per_message_declaration.so registration_by_message.so registration_by_topic.so /usr/local/lib/mosquitto/plugins/
 
-# Set working directory for gdpr rights plugin and build
+# Build the GDPR Plugin and copy it
 WORKDIR /build/gdpr_plugin
-RUN make
+RUN make && \
+    cp gdpr_rights_plugin.so /usr/local/lib/mosquitto/plugins/
 
-# Create plugins directory in the final image
-RUN mkdir -p /mosquitto/plugins
+# Create a directory for the SQLite DB and an empty DB file
+RUN mkdir -p /usr/local/lib/mosquitto/plugins/db && \
+    touch /usr/local/lib/mosquitto/plugins/db/mqtt_pbac.db
+# (An environment variable is set here for reference.)
+ENV GDPR_PLUGIN_DB_PATH=/usr/local/lib/mosquitto/plugins/db/mqtt_pbac.db
 
-# Copy the built plugins to the plugins directory
-RUN cp /build/intent_plugin/per_message_declaration.so /mosquitto/plugins/
-RUN cp /build/intent_plugin/registration_by_message.so /mosquitto/plugins/
-RUN cp /build/intent_plugin/registration_by_topic.so /mosquitto/plugins/
-RUN cp /build/gdpr_plugin/gdpr_rights_plugin.so /mosquitto/plugins/
+##############################################
+# Stage 2: Create the final runtime image
+##############################################
+FROM alpine:latest
 
-# Create a directory for SQLite database files
-RUN mkdir -p /mosquitto/plugins/db
-RUN touch /mosquitto/plugins/db/mqtt_pbac.db
-ENV GDPR_PLUGIN_DB_PATH=/mosquitto/plugins/db/mqtt_pbac.db
+# Install runtime dependencies
+RUN apk update && apk add --no-cache \
+    openssl \
+    sqlite-libs \
+    c-ares \
+    cjson \
+    libwebsockets \
+    ca-certificates \
+    bash \
+    argon2-libs
 
-# Copy the configuration file for Mosquitto
-ADD mosquitto.conf /mosquitto/config/mosquitto.conf
+# Copy Mosquitto binaries, libraries, and plugins from the builder
+COPY --from=builder /usr/local/ /usr/local/
 
-# Expose default MQTT ports
+# Copy your Mosquitto configuration file (ensure mosquitto.conf is in your build context)
+COPY mosquitto.conf /usr/local/etc/mosquitto/mosquitto.conf
+
+# After creating the mosquitto user, setting up /mosquitto, and creating the symlink:
+    RUN adduser -D mosquitto && \
+    mkdir -p /mosquitto/log && \
+    touch /mosquitto/log/mosquitto.log && \
+    chmod 0700 /mosquitto/log/mosquitto.log && \
+    chown -R mosquitto:mosquitto /mosquitto && \
+    ln -s /usr/local/lib/mosquitto/plugins /mosquitto/plugins && \
+    chown -R mosquitto:mosquitto /usr/local/lib/mosquitto/plugins/db
+
+# Set PATH so that executables are available
+ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Expose Mosquitto's default port
 EXPOSE 1883
 
-# Start Mosquitto broker with the custom configuration
-CMD ["/usr/sbin/mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+# Start Mosquitto using the provided configuration file
+CMD ["/bin/sh", "-c", "export GDPR_PLUGIN_DB_PATH=/mosquitto/plugins/db/mqtt_pbac.db && exec mosquitto -c /usr/local/etc/mosquitto/mosquitto.conf"]

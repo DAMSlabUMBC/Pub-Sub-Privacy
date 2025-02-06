@@ -5,7 +5,6 @@
 #include <string.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include <mosquitto.h>
 #include <mosquitto_broker.h>
 #include <mosquitto_plugin.h>
 #include "mqtt_pbac.h"

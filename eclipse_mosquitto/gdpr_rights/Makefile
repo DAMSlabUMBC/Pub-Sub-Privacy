@@ -2,7 +2,7 @@
 
 CC = gcc
 CFLAGS = -fPIC -I/usr/include
-LDFLAGS = -shared -lpthread -lsqlite3 -lmosquitto
+LDFLAGS = -shared -lpthread -lsqlite3 
 TARGET = gdpr_rights_plugin.so
 SOURCES = gdpr_rights_plugin.c
 OBJECTS = $(SOURCES:.c=.o)

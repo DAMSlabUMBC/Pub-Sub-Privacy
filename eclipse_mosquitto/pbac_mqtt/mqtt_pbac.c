@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include <mqtt_protocol.h>
 
 /* Define the global mutex */
 pthread_mutex_t pbac_mutex = PTHREAD_MUTEX_INITIALIZER;

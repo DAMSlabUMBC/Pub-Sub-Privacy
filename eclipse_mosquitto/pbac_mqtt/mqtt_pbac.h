@@ -4,10 +4,8 @@
 #define MQTT_PBAC_H
 
 #include <pthread.h>
-#include <mosquitto.h>
 #include <mosquitto_broker.h>
 #include <mosquitto_plugin.h>
-#include <mqtt_protocol.h>
 
 /* Mutex for thread safety */
 extern pthread_mutex_t pbac_mutex;

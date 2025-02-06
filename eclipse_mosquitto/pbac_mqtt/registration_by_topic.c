@@ -5,10 +5,8 @@
 #include <string.h>
 #include <pthread.h>
 #include <sqlite3.h>
-#include <mosquitto.h>
 #include <mosquitto_broker.h>
 #include <mosquitto_plugin.h>
-#include <mqtt_protocol.h>
 #include "mqtt_pbac.h"
 
 /* External global variables from mqtt_pbac.c */
