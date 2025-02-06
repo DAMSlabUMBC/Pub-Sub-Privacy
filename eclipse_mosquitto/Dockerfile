@@ -1,6 +1,4 @@
-##############################################
 # Stage 1: Build Mosquitto and its plugins
-##############################################
 FROM alpine:latest AS builder
 
 # Install build dependencies (using libxslt instead of xsltproc)
@@ -51,13 +49,12 @@ RUN cmake -DWITH_WEBSOCKETS=ON \
     make install && \
     cp src/mosquitto /usr/local/sbin/mosquitto
 
-# (Optional) Verify that headers are installed
+# Verify that headers are installed
 RUN ls /usr/local/include/mosquitto.h && \
     ls /usr/local/include/mosquitto_broker.h && \
     ls /usr/local/include/mosquitto_plugin.h
 
 # Prepare directories for plugin builds and installation.
-# We install plugins into /usr/local/lib/mosquitto/plugins.
 RUN mkdir -p /build/intent_plugin /build/gdpr_plugin /usr/local/lib/mosquitto/plugins
 
 # Copy plugin source code into the builder stage
@@ -77,12 +74,10 @@ RUN make && \
 # Create a directory for the SQLite DB and an empty DB file
 RUN mkdir -p /usr/local/lib/mosquitto/plugins/db && \
     touch /usr/local/lib/mosquitto/plugins/db/mqtt_pbac.db
-# (An environment variable is set here for reference.)
+
 ENV GDPR_PLUGIN_DB_PATH=/usr/local/lib/mosquitto/plugins/db/mqtt_pbac.db
 
-##############################################
 # Stage 2: Create the final runtime image
-##############################################
 FROM alpine:latest
 
 # Install runtime dependencies
