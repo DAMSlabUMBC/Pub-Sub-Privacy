@@ -1,32 +1,6 @@
-import logging
-import itertools
-from enum import Enum
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
-
-# Define enums for easier referencing later
-class PurposeManagementMethod(Enum):
-    PM_0 = "None"
-    PM_1 = "Purpose-Enconding Topics"
-    PM_2 = "Per-Message Declaration"
-    PM_3 = "Registration by Message"
-    PM_4 = "Registration by Topic"
-
-class C1RightsMethod(Enum):
-    C1_0 = "None"
-    C1_1 = "Direct Publication"
-    C1_2 = "Pre-Registration"
-
-class C2RightsMethod(Enum):
-    C2_0 = "None"
-    C2_1 = "Direct Publication"
-    C2_2 = "Broker-Facilitatied"
-
-class C3RightsMethod(Enum):
-    C3_0 = "None"
-    C3_1 = "Direct Publication"
-    C3_2 = "Broker-Facilitatied"
-
+from Benchmark import PurposeManagementMethod, C1RightsMethod, C2RightsMethod, C3RightsMethod
 
 """Initializes a Paho MQTTv5 client and returns it to the requester
 
@@ -76,7 +50,7 @@ Returns
 paho.mqtt.client.MQTTErrorCode
     The return code of the connect attempt
 """
-def connect_client(client: mqtt.Client, success_callback: function, failure_callback: function, broker_address: str, port: int = 1883, clean_start: bool = True) -> mqtt.MQTTErrorCode:
+def connect_client(client: mqtt.Client, success_callback: mqtt.CallbackOnConnect, failure_callback: mqtt.CallbackOnConnectFail, broker_address: str, port: int = 1883, clean_start: bool = True) -> mqtt.MQTTErrorCode:
         
         # We don't need to do any additional processing before using the callbacks, so we can set those directly
         client.on_connect = success_callback
