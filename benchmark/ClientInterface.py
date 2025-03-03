@@ -50,11 +50,13 @@ Returns
 paho.mqtt.client.MQTTErrorCode
     The return code of the connect attempt
 """
-def connect_client(client: mqtt.Client, success_callback: mqtt.CallbackOnConnect, failure_callback: mqtt.CallbackOnConnectFail, broker_address: str, port: int = 1883, clean_start: bool = True) -> mqtt.MQTTErrorCode:
+def connect_client(client: mqtt.Client, broker_address: str, port: int = 1883, success_callback: mqtt.CallbackOnConnect | None = None, failure_callback: mqtt.CallbackOnConnectFail | None = None, clean_start: bool = True) -> mqtt.MQTTErrorCode:
         
         # We don't need to do any additional processing before using the callbacks, so we can set those directly
-        client.on_connect = success_callback
-        client.on_connect_fail = failure_callback
+        if success_callback is not None:
+            client.on_connect = success_callback
+        if failure_callback is not None:
+            client.on_connect_fail = failure_callback
 
         # Attempt to send connect packet
         try:
