@@ -139,5 +139,5 @@ list[tuple[paho.mqtt.client.MQTTErrorCode, str]]
     A list of tuples which contain the error code of the message publication and the topic for the error code
     (As method PM_1, a single publication request may need to be sent to multiple topics)
 """
-def publish_with_purpose(client: mqtt.Client, method: PurposeManagementMethod, topic: str, purpose: str = None, qos: int = 0, payload: str = "") -> list[tuple[mqtt.MQTTMessageInfo, str]]:
+def publish_with_purpose(client: mqtt.Client, method: PurposeManagementMethod, topic: str, purpose: str = None, qos: int = 0, retain: bool = False, payload: str = "") -> list[tuple[mqtt.MQTTMessageInfo, str]]:
     return
