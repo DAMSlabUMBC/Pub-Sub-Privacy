@@ -1,6 +1,9 @@
 import threading
 import queue
+import sys
+from pathlib import Path
 from typing import TextIO
+from GlobalDefs import ExitCode
 
 class ResultLogger:
 
@@ -40,7 +43,16 @@ class ResultLogger:
 
         # Open the file for writing and start the processing thread
         try:
-            self.file_handle = open(filename, 'w')
+            # Make directories if needed
+            logpath = Path(filename)
+            if logpath.exists() and not logpath.is_dir():
+                print(f"Specified output directory {logpath} exists and is not a directory")
+                sys.exit(ExitCode.BAD_ARGUMENT)
+
+            logpath.parent.mkdir(exist_ok=True, parents=True)
+
+            # Open file and start logging
+            self.file_handle = open(logpath, 'w')
             self.logging_thread.start()
             self.running = True
         except Exception:

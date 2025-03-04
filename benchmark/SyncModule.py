@@ -1,5 +1,5 @@
 import paho.mqtt.client as mqtt
-from Benchmark import PurposeManagementMethod, CLIENT_MODULE
+from GlobalDefs import *
 from typing import Any
 from time import sleep
 
@@ -90,13 +90,13 @@ class BenchmarkSynchronizer:
             self.benchmark_done_states[self.my_id] = True
 
 
-    def wait_for_ready(self):
+    def wait_for_ready(self) -> bool:
         # Wait until all benchmarks are ready and return True.
         while not all(self.benchmark_ready_states.values()):
             sleep(1)  # Sleep to prevent busy-waiting
         return True
 
-    def wait_for_done(self):
+    def wait_for_done(self) -> bool:
         # Wait until all benchmarks are done and return True.
         while not all(self.benchmark_done_states.values()):
             sleep(1)  # Sleep to prevent busy-waiting

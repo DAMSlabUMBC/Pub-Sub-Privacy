@@ -1,6 +1,6 @@
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
-from Benchmark import PurposeManagementMethod, C1RightsMethod, C2RightsMethod, C3RightsMethod
+from EnumDefs import PurposeManagementMethod, C1RightsMethod, C2RightsMethod, C3RightsMethod
 
 """Initializes a Paho MQTTv5 client and returns it to the requester
 
