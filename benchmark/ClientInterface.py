@@ -1,5 +1,6 @@
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
+from typing import Callable, Optional, Tuple, List
 from EnumDefs import PurposeManagementMethod, C1RightsMethod, C2RightsMethod, C3RightsMethod
 
 """Initializes a Paho MQTTv5 client and returns it to the requester
@@ -50,20 +51,22 @@ Returns
 paho.mqtt.client.MQTTErrorCode
     The return code of the connect attempt
 """
-def connect_client(client: mqtt.Client, broker_address: str, port: int = 1883, success_callback: mqtt.CallbackOnConnect | None = None, failure_callback: mqtt.CallbackOnConnectFail | None = None, clean_start: bool = True) -> mqtt.MQTTErrorCode:
+def connect_client(client: mqtt.Client, broker_address: str, port: int = 1883, 
+                  success_callback: Optional[Callable] = None, 
+                  failure_callback: Optional[Callable] = None, 
+                  clean_start: bool = True) -> mqtt.MQTTErrorCode:
         
-        # We don't need to do any additional processing before using the callbacks, so we can set those directly
-        if success_callback is not None:
-            client.on_connect = success_callback
-        if failure_callback is not None:
-            client.on_connect_fail = failure_callback
+    # We don't need to do any additional processing before using the callbacks, so we can set those directly
+    if success_callback is not None:
+        client.on_connect = success_callback
+    if failure_callback is not None:
+        client.on_connect_fail = failure_callback
 
-        # Attempt to send connect packet
-        try:
-            return client.connect(host=broker_address, port=port, clean_start=clean_start)
-        except Exception as e:
-            return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN
-        
+    # Attempt to send connect packet
+    try:
+        return client.connect(host=broker_address, port=port, clean_start=clean_start)
+    except Exception as e:
+        return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN
 
 """Attempts to SUBSCRIBE client to a topic filter in MQTT with a specified purpose filter
 
@@ -89,8 +92,15 @@ Returns
 tuple[paho.mqtt.client.MQTTErrorCode, int | None]
     A tuple containing the error code and (if successful) the granted quality of service for the subscription
 """
-def subscribe_with_purpose_filter(client: mqtt.Client, method: PurposeManagementMethod, callback: function, topic_filter: str, purpose_filter: str, subscriber_id: str = None, qos: int = 0) -> tuple[mqtt.MQTTErrorCode]:
-    return
+def subscribe_with_purpose_filter(client: mqtt.Client, method: PurposeManagementMethod, 
+                                  callback: Callable, topic_filter: str, purpose_filter: str, 
+                                  subscriber_id: Optional[str] = None, qos: int = 0) -> Tuple[mqtt.MQTTErrorCode, Optional[int]]:
+    client.on_message = callback  # Set the callback for incoming messages
+    try:
+        result, mid = client.subscribe(topic_filter, qos=qos)
+        return result, mid  # Return error code and message ID
+    except Exception:
+        return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
 
 """Attempts to register a purpose filter for publications to a topic (Used only for PM_2 and PM_3)
 
@@ -112,9 +122,9 @@ Returns
 paho.mqtt.client.MQTTErrorCode
     The message publication information
 """
-def register_publish_purpose_for_topic(client: mqtt.Client, method: PurposeManagementMethod, topic: str, purpose: str, qos: int = 0) -> mqtt.MQTTMessageInfo:
-    return
-
+def register_publish_purpose_for_topic(client: mqtt.Client, method: PurposeManagementMethod, 
+                                       topic: str, purpose: str, qos: int = 0) -> mqtt.MQTTMessageInfo:
+    return  # Placeholder: Not implemented yet as not required for basic sync
 
 """Attempts to PUBLISH a message a topic in MQTT with a specified purpose filter
 
@@ -139,5 +149,11 @@ list[tuple[paho.mqtt.client.MQTTErrorCode, str]]
     A list of tuples which contain the error code of the message publication and the topic for the error code
     (As method PM_1, a single publication request may need to be sent to multiple topics)
 """
-def publish_with_purpose(client: mqtt.Client, method: PurposeManagementMethod, topic: str, purpose: str = None, qos: int = 0, retain: bool = False, payload: str = "") -> list[tuple[mqtt.MQTTMessageInfo, str]]:
-    return
+def publish_with_purpose(client: mqtt.Client, method: PurposeManagementMethod, 
+                         topic: str, purpose: Optional[str] = None, qos: int = 0, 
+                         retain: bool = False, payload: str = "") -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
+    try:
+        msg_info = client.publish(topic, payload, qos=qos, retain=retain)
+        return [(msg_info, topic)]  # Return list of (message info, topic) tuples
+    except Exception:
+        return [(mqtt.MQTTMessageInfo(mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN), topic)]
