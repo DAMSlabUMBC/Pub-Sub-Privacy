@@ -14,6 +14,7 @@ class ResultLogger:
 
     def __init__(self):
         self.logging_thread = threading.Thread(target=self._write_logs)
+        self.logging_thread.daemon = True
         return
 
     """Opens the log file at filename and starts the logging thread

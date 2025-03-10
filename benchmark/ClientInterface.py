@@ -1,7 +1,7 @@
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
 from typing import Callable, Optional, Tuple, List
-from EnumDefs import PurposeManagementMethod, C1RightsMethod, C2RightsMethod, C3RightsMethod
+from GlobalDefs import PurposeManagementMethod, C1RightsMethod, C2RightsMethod, C3RightsMethod
 
 """Initializes a Paho MQTTv5 client and returns it to the requester
 
@@ -95,9 +95,16 @@ tuple[paho.mqtt.client.MQTTErrorCode, int | None]
 def subscribe_with_purpose_filter(client: mqtt.Client, method: PurposeManagementMethod, 
                                   callback: Callable, topic_filter: str, purpose_filter: str, 
                                   subscriber_id: Optional[str] = None, qos: int = 0) -> Tuple[mqtt.MQTTErrorCode, Optional[int]]:
+    
+    if purpose_filter == None:
+        purpose_filter = "*"
+
+    properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
+    properties.UserProperty = ('PF-SP', purpose_filter)
+    
     client.on_message = callback  # Set the callback for incoming messages
     try:
-        result, mid = client.subscribe(topic_filter, qos=qos)
+        result, mid = client.subscribe(topic_filter, qos=qos, properties=properties)
         return result, mid  # Return error code and message ID
     except Exception:
         return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
@@ -153,7 +160,13 @@ def publish_with_purpose(client: mqtt.Client, method: PurposeManagementMethod,
                          topic: str, purpose: Optional[str] = None, qos: int = 0, 
                          retain: bool = False, payload: str = "") -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
     try:
-        msg_info = client.publish(topic, payload, qos=qos, retain=retain)
+        if purpose == None:
+            purpose = "*"
+
+        properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
+        properties.UserProperty = ('PF-MP', purpose)
+
+        msg_info = client.publish(topic, payload, qos=qos, retain=retain, properties=properties)
         return [(msg_info, topic)]  # Return list of (message info, topic) tuples
     except Exception:
         return [(mqtt.MQTTMessageInfo(mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN), topic)]

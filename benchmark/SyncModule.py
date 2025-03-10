@@ -1,5 +1,5 @@
 import paho.mqtt.client as mqtt
-from GlobalDefs import *
+import GlobalDefs
 from typing import Any
 from time import sleep
 
@@ -13,7 +13,9 @@ class BenchmarkSynchronizer:
     THIS_NODE_DONE_TOPIC: str
     
     READY_TOPIC_PREFIX = "benchmark/ready_state/"
+    READY_TOPIC_FILTER = "benchmark/ready_state/#"
     DONE_TOPIC_PREFIX = "benchmark/done_state/"
+    DONE_TOPIC_FILTER = "benchmark/done_state/#"
     SYNC_PURPOSE = "lifecycle"
     
     def __init__(self, my_id: str, expected_benchmarks: list[str]):
@@ -26,38 +28,43 @@ class BenchmarkSynchronizer:
         self.THIS_NODE_DONE_TOPIC = BenchmarkSynchronizer.DONE_TOPIC_PREFIX + my_id
 
 
-    def start(self, broker_address: str, broker_port: int, method: PurposeManagementMethod):
+    def start(self, broker_address: str, broker_port: int, method: GlobalDefs.PurposeManagementMethod):
         # Create and connect client
-        client = CLIENT_MODULE.create_v5_client("syncronization_client")
-        result_code = CLIENT_MODULE.connect_client(client, broker_address, broker_port)
+        client = GlobalDefs.CLIENT_MODULE.create_v5_client(f"{self.my_id} sync client")
+        result_code = GlobalDefs.CLIENT_MODULE.connect_client(client, broker_address, broker_port)
     
         if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
             self.client = client
         else:
             raise RuntimeError("Failed to create Syncronization Client")
-        
+
         # Attach message handler
         self.client.on_message = self._on_message_recv
-    
+
         # Start the client loop
         self.client.loop_start()
         
         # Subscribe to ready and done topics for each benchmark
-        for id in self.benchmark_ready_states.keys:
+        for id in self.benchmark_ready_states.keys():
             
             # Don't subscribe to this node's topic
             if id == self.my_id:
                 continue
             
             # Register subscriptions
-            CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
-                                                            self.THIS_NODE_READY_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
-            CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
-                                                           self.THIS_NODE_DONE_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
+            GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
+                                                            self.READY_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
+            GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
+                                                           self.DONE_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
     
             # Prep publications (if the method needs it)
-            CLIENT_MODULE.register_publish_purpose_for_topic(self.client, method, self.THIS_NODE_READY_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
-            CLIENT_MODULE.register_publish_purpose_for_topic(self.client, method, self.THIS_NODE_DONE_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
+            GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(self.client, method, self.THIS_NODE_READY_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
+            GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(self.client, method, self.THIS_NODE_DONE_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
+
+    def stop(self):
+
+        # Stop the syncronization clients
+        self.client.loop_stop()
 
         
     def _on_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):    
@@ -67,6 +74,8 @@ class BenchmarkSynchronizer:
         fields = message.payload.decode().split(':')
         id = fields[0]
         status = fields[1]
+
+        print(f"Recv {topic} - {id} - {status}")
         
         # Set fields as needed for topic
         if topic.startswith(self.READY_TOPIC_PREFIX):
@@ -78,26 +87,37 @@ class BenchmarkSynchronizer:
                 self.benchmark_done_states[id] = True   
         
     
-    def notify_ready(self, method: PurposeManagementMethod):
-        CLIENT_MODULE.publish_with_purpose(self.client, method, self.THIS_NODE_READY_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1, retain=True, payload=f"{self.my_id}:READY")
-        if self.my_id in self.benchmark_ready_states:
-            self.benchmark_ready_states[self.my_id] = True
+    def _notify_ready(self, method: GlobalDefs.PurposeManagementMethod):
+        GlobalDefs.CLIENT_MODULE.publish_with_purpose(self.client, method, self.THIS_NODE_READY_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1, payload=f"{self.my_id}:READY")
             
    
-    def notify_done(self, method: PurposeManagementMethod):
-        CLIENT_MODULE.publish_with_purpose(self.client, method, self.THIS_NODE_DONE_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1, retain=True, payload=f"{self.my_id}:DONE")
-        if self.my_id in self.benchmark_done_states:
-            self.benchmark_done_states[self.my_id] = True
+    def _notify_done(self, method: GlobalDefs.PurposeManagementMethod):
+        GlobalDefs.CLIENT_MODULE.publish_with_purpose(self.client, method, self.THIS_NODE_DONE_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1, payload=f"{self.my_id}:DONE")
 
 
-    def wait_for_ready(self) -> bool:
-        # Wait until all benchmarks are ready and return True.
-        while not all(self.benchmark_ready_states.values()):
-            sleep(1)  # Sleep to prevent busy-waiting
-        return True
+    def notify_and_wait_for_ready(self, method: GlobalDefs.PurposeManagementMethod) -> bool:
+        
+        while True:
+            # We need to periodically send out that we're ready, otherwise the other benchmarks won't start
+            self._notify_ready(method)
 
-    def wait_for_done(self) -> bool:
-        # Wait until all benchmarks are done and return True.
-        while not all(self.benchmark_done_states.values()):
-            sleep(1)  # Sleep to prevent busy-waiting
-        return True
+            # Wait until all benchmarks are ready and return True.
+            if all(self.benchmark_ready_states.values()):
+                 return True
+
+            # Sleep to prevent busy-waiting
+            sleep(1)            
+            
+
+    def notify_and_wait_for_done(self, method: GlobalDefs.PurposeManagementMethod) -> bool:
+        
+        while True:
+            # We need to periodically send out that we're done, otherwise the other benchmarks won't finish
+            self._notify_done(method)
+
+            # Wait until all benchmarks are done and return True.
+            if all(self.benchmark_ready_states.values()):
+                 return True
+
+            # Sleep to prevent busy-waiting
+            sleep(1) 
