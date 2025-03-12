@@ -52,20 +52,24 @@ class BenchmarkSynchronizer:
                 continue
             
             # Register subscriptions
-            GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
-                                                            self.READY_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
-            GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
-                                                           self.DONE_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
-    
-            # Prep publications (if the method needs it)
-            GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(self.client, method, self.THIS_NODE_READY_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
-            GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(self.client, method, self.THIS_NODE_DONE_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
-
-    def stop(self):
-
-        # Stop the syncronization clients
-        self.client.loop_stop()
-
+            # For broker-unaware purpose filtering, no wildcards can be used
+            if method == GlobalDefs.PurposeManagementMethod.PM_0:
+                for benchmark in self.benchmark_ready_states.keys():
+                    GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
+                                                            self.READY_TOPIC_PREFIX + benchmark, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
+                    GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
+                                                            self.DONE_TOPIC_PREFIX + benchmark, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
+                   
+            # Can use wildcards for the rest 
+            else:
+                GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
+                                                                self.READY_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
+                GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
+                                                            self.DONE_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
+        
+                # Prep publications (if the method needs it)
+                GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(self.client, method, self.THIS_NODE_READY_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
+                GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(self.client, method, self.THIS_NODE_DONE_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
         
     def _on_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):    
      
@@ -116,7 +120,7 @@ class BenchmarkSynchronizer:
             self._notify_done(method)
 
             # Wait until all benchmarks are done and return True.
-            if all(self.benchmark_ready_states.values()):
+            if all(self.benchmark_done_states.values()):
                  return True
 
             # Sleep to prevent busy-waiting

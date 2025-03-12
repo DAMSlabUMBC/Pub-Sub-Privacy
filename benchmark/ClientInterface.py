@@ -1,7 +1,7 @@
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
 from typing import Callable, Optional, Tuple, List
-from GlobalDefs import PurposeManagementMethod, C1RightsMethod, C2RightsMethod, C3RightsMethod
+import GlobalDefs
 
 """Initializes a Paho MQTTv5 client and returns it to the requester
 
@@ -92,22 +92,75 @@ Returns
 tuple[paho.mqtt.client.MQTTErrorCode, int | None]
     A tuple containing the error code and (if successful) the granted quality of service for the subscription
 """
-def subscribe_with_purpose_filter(client: mqtt.Client, method: PurposeManagementMethod, 
+def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, 
                                   callback: Callable, topic_filter: str, purpose_filter: str, 
-                                  subscriber_id: Optional[str] = None, qos: int = 0) -> Tuple[mqtt.MQTTErrorCode, Optional[int]]:
+                                  qos: int = 0) -> Tuple[mqtt.MQTTErrorCode, Optional[int]]:
     
     if purpose_filter == None:
-        purpose_filter = "*"
-
-    properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
-    properties.UserProperty = ('PF-SP', purpose_filter)
-    
+        purpose_filter = GlobalDefs.ALL_PURPOSE_FILTER
+        
     client.on_message = callback  # Set the callback for incoming messages
-    try:
-        result, mid = client.subscribe(topic_filter, qos=qos, properties=properties)
+        
+    # == Method 0 ==
+    if method == GlobalDefs.PurposeManagementMethod.PM_0:
+        
+        # Under method 0, purposes are encoded as topics
+        described_purposes = GlobalDefs.find_described_purposes(purpose_filter)
+
+        # Convert the purpose list into topics
+        topic_list = list()
+        for purpose in described_purposes:
+            purpose = purpose.replace('/', '|')
+            purpose_subtopic = f'[{purpose}]'
+            full_topic = f'{topic_filter}/{purpose_subtopic}'
+            topic_list.append(full_topic)
+
+        # Subscribe to each topic
+        for topic in topic_list:
+            result, mid = client.subscribe(topic, qos=qos)
+            if result is not mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
+                return result, mid
+            
+        return result, mid
+    
+    # == Method 1 and 2 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_1 or method == GlobalDefs.PurposeManagementMethod.PM_2:
+        
+        # Purpose filter is supplied on subscription
+        properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
+        properties.UserProperty = (GlobalDefs.PROPERTY_SP, purpose_filter)
+        
+        try:
+            result, mid = client.subscribe(topic_filter, qos=qos, properties=properties)
+            return result, mid  # Return error code and message ID
+        except Exception:
+            return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
+        
+        finally:
+            return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
+
+    # == Method 3 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_3:
+        
+        # Perform a normal subscribe first
+        try:
+            result, mid = client.subscribe(topic_filter, qos=qos)
+        except Exception as e:
+            return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
+        
+        # If it didn't fail, send registration for subscription purpose
+        sp_reg_topic = f"{GlobalDefs.REG_BY_TOPIC_SUB_REG_TOPIC}/{topic_filter}[{purpose_filter}]"
+        
+        # If topic contains a wildcard, it needs to be replaced
+        sp_reg_topic = sp_reg_topic.replace("#", "HASH").replace("+","PLUS")
+        
+        client.publish(sp_reg_topic, qos=qos)
+        
         return result, mid  # Return error code and message ID
-    except Exception:
-        return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
+        
+    # Not able to subscribe if method is invalid
+    return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
+
 
 """Attempts to register a purpose filter for publications to a topic (Used only for PM_2 and PM_3)
 
@@ -129,9 +182,29 @@ Returns
 paho.mqtt.client.MQTTErrorCode
     The message publication information
 """
-def register_publish_purpose_for_topic(client: mqtt.Client, method: PurposeManagementMethod, 
-                                       topic: str, purpose: str, qos: int = 0) -> mqtt.MQTTMessageInfo:
-    return  # Placeholder: Not implemented yet as not required for basic sync
+def register_publish_purpose_for_topic(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, 
+                                       topic: str, purpose: str, qos: int = 0) -> mqtt.MQTTMessageInfo | None:
+    
+    # Not required for methods 0/1
+    # == Method 2 == #
+    if method == GlobalDefs.PurposeManagementMethod.PM_2:
+        
+        # Send registration containing desired MP to the registration topic
+        property_value = f"{purpose}:{topic}"
+        properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
+        properties.UserProperty = (GlobalDefs.PROPERTY_MP, property_value)
+        print(f"Regging {property_value}")
+        return client.publish(GlobalDefs.REG_BY_MSG_REG_TOPIC, qos=qos, properties=properties)
+    
+    # == Method 3 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_3:
+        
+        # Send registration to custom registration topic
+        mp_reg_topic = f"{GlobalDefs.REG_BY_TOPIC_PUB_REG_TOPIC}/{topic}[{purpose}]"
+        return client.publish(mp_reg_topic, qos=qos)
+        
+    # Not required if method is invalid
+    return None
 
 """Attempts to PUBLISH a message a topic in MQTT with a specified purpose filter
 
@@ -156,17 +229,51 @@ list[tuple[paho.mqtt.client.MQTTErrorCode, str]]
     A list of tuples which contain the error code of the message publication and the topic for the error code
     (As method PM_1, a single publication request may need to be sent to multiple topics)
 """
-def publish_with_purpose(client: mqtt.Client, method: PurposeManagementMethod, 
+def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, 
                          topic: str, purpose: Optional[str] = None, qos: int = 0, 
-                         retain: bool = False, payload: str = "") -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
-    try:
-        if purpose == None:
-            purpose = "*"
+                         retain: bool = False, payload: str | None = None) -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
+    
+    
+    if purpose == None:
+        purpose = GlobalDefs.ALL_PURPOSE_FILTER
+        
+    ret_list = list()
+    
+    # == Method 0 ==
+    if method == GlobalDefs.PurposeManagementMethod.PM_0:
+        
+        # Need to send message to each purpose topic
+        described_purposes = GlobalDefs.find_described_purposes(purpose)
 
+        # Convert the purpose list into topics
+        topic_list = list()
+        for purpose in described_purposes:
+            purpose = purpose.replace('/', '|')
+            purpose_subtopic = f'[{purpose}]'
+            full_topic = f'{topic}/{purpose_subtopic}'
+            topic_list.append(full_topic)
+
+        # Publish to each topic
+        for curr_topic in topic_list:
+            result = client.publish(curr_topic, qos=qos, retain=retain, payload=payload)
+            ret_list.append((result, curr_topic))
+    
+    # == Method 1 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_1:
+        
+        # Publish with required MP as a property
         properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
-        properties.UserProperty = ('PF-MP', purpose)
-
+        properties.UserProperty = (GlobalDefs.PROPERTY_MP, purpose)
+        
         msg_info = client.publish(topic, payload, qos=qos, retain=retain, properties=properties)
         return [(msg_info, topic)]  # Return list of (message info, topic) tuples
-    except Exception:
-        return [(mqtt.MQTTMessageInfo(mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN), topic)]
+    
+    # == Methods 2 and 3 == #
+    elif method == GlobalDefs.PurposeManagementMethod.PM_2 or method == GlobalDefs.PurposeManagementMethod.PM_3:
+        
+        # This is just a normal publish
+        msg_info = client.publish(topic, payload, qos=qos, retain=retain)
+        return [(msg_info, topic)]  # Return list of (message info, topic) tuples
+        
+    # Not required if method is invalid
+    return ret_list

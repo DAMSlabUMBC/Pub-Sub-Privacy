@@ -12,7 +12,7 @@ def configure_and_run_tests(config: str, broker_address: str, broker_port: int, 
     # Extract my_id from config file name (e.g., "benchmark-1.cfg" -> "benchmark-1")
     my_id = os.path.basename(config).replace(".cfg", "")
     existing_benchmarks = ["benchmark-1", "benchmark-2"]  # TODO: Read from config or CLI in the future
-    method = GlobalDefs.PurposeManagementMethod.PM_1
+    method = GlobalDefs.PurposeManagementMethod.PM_0
 
     # TODO: Read Config (for future dynamic benchmark list)
 
@@ -55,7 +55,6 @@ def configure_and_run_tests(config: str, broker_address: str, broker_port: int, 
     GlobalDefs.SYNC_MODULE.notify_and_wait_for_done(method)
     
     # All Done - Log completion and exit
-    GlobalDefs.SYNC_MODULE.stop()
     print(f"{my_id} completed successfully")
     return
 

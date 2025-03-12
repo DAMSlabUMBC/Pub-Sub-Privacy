@@ -1,4 +1,5 @@
 from enum import Enum, IntEnum
+import itertools
 from types import ModuleType
 from typing import TYPE_CHECKING, List  # Import List for compatibility
 
@@ -29,6 +30,8 @@ class C3RightsMethod(Enum):
     C3_0 = "None"
     C3_1 = "Direct Publication"
     C3_2 = "Broker-Facilitated"
+    
+ALL_PURPOSE_FILTER: str = "*"
 
 # Exit Code definitions
 class ExitCode(IntEnum):
@@ -40,9 +43,20 @@ class ExitCode(IntEnum):
     FAILED_TO_INIT_LOGGING = 5
     UNKNOWN_ERROR = 99
 
+# These should be assigned as created
 CLIENT_MODULE: ModuleType
 SYNC_MODULE: 'BenchmarkSynchronizer'
 LOGGING_MODULE: 'ResultLogger'
+
+# These should be assigned to based on the config file
+REG_BY_TOPIC_PUB_REG_TOPIC: str = "$PF/MP_reg"
+REG_BY_TOPIC_SUB_REG_TOPIC: str= "$PF/SP_reg"
+REG_BY_MSG_REG_TOPIC: str = "$PF/purpose_management"
+
+PROPERTY_MP: str = "PF-MP"
+PROPERTY_SP: str = "PF-SP"
+
+# Required functions for the client
 CLIENT_FUNCTIONS: List[str] = [  
     "create_v5_client", 
     "connect_client", 
@@ -50,3 +64,28 @@ CLIENT_FUNCTIONS: List[str] = [
     "register_publish_purpose_for_topic", 
     "publish_with_purpose"
 ]
+
+## UTILITY METHODS ##
+def find_described_purposes(purpose_filter: str) -> list[str]:
+
+    # Break purpose filter into individual purposes
+    filter_levels = purpose_filter.split('/')
+    decomposed_levels = list()
+
+    for level in filter_levels:
+        if '{' in level:
+            new_level = level.replace('{','').replace('}','').split(',')
+        else:
+            new_level = [level]
+
+        decomposed_levels.append(new_level)
+
+    described_purposes = list()
+    decomposed_purpose_list = itertools.product(*decomposed_levels)
+    for purpose_list in decomposed_purpose_list:
+        purpose = '/'.join(purpose_list)
+        if not './' in purpose:
+            purpose = purpose.replace('/.', '')
+            described_purposes.append(purpose)
+
+    return described_purposes
