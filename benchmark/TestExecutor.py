@@ -7,7 +7,7 @@ import threading
 import ischedule
 import sched
 import GlobalDefs
-from typing import List, Set, Tuple, Any
+from typing import List, Dict, Tuple, Any
 import datetime
 from dataclasses import dataclass
 
@@ -30,14 +30,14 @@ class TestConfiguration:
     
     # === Topic information ===   
     pct_topics_per_client: float = 1.0
-    topic_list: List[str] = list()
+    publish_topic_list: List[str] = list()
+    subscribe_topic_list: List[str] = list()
     
     # Used to randomly generate topics
     generate_topics: bool = True
     topic_count: int = 0
     
     # === Purpose information ===   
-    pct_purpose_per_client: float = 1.0
     purpose_list: List[str] = list()
     
     # Used to randomly generate purposes
@@ -47,7 +47,7 @@ class TestConfiguration:
     # === Publication information ===   
     pct_to_publish_on: float = 1.0
     pct_topics_per_pub: float = 1.0
-    pub_period_ms: int = 1000
+    pub_period_ms: int = 500
     min_payload_length_bytes: int = 1
     max_payload_length_bytes: int = 1024
     
@@ -62,8 +62,8 @@ class TestExecutor:
     class TestClient:
         client: mqtt.Client
         name: str
-        subscribed_topics: List[Tuple[str, str]] = list() # Maps topic filter to purpose filter
-        publish_topics: List[Tuple[str, str]] = list() # Maps topic to purpose filter
+        subscribed_topics: Dict[str, str] = dict() # Maps topic filter to purpose filter
+        publish_topics: Dict[str, str] = dict() # Maps topic to purpose filter
         is_connected: bool = False
         
         def __init__(self, client: mqtt.Client, name: str):
@@ -79,6 +79,7 @@ class TestExecutor:
     duration_scheduler: sched.scheduler
     
     all_clients: List[TestClient] = list()
+    pending_publishes: Dict[int, Tuple[str, str, str]] = dict() # message id => (topic, purpose, message_type)
     
     def __init__(self, executor_id: str, broker_address: str, broker_port: int, method: GlobalDefs.PurposeManagementMethod, seed: int | None = None):
         
@@ -89,14 +90,14 @@ class TestExecutor:
         
         # If not supplied, set random seed based on time
         if seed is None:
-            seed = (int)(datetime.datetime.now().timestamp())
+            seed = time.time()
             
         #  Seed the random number generator and write seed to log file
         random.seed(seed)
         GlobalDefs.LOGGING_MODULE.log_seed(seed)
         
         # Configure scheduler
-        self.duration_scheduler = sched.scheduler(time.monotonic, time.sleep)
+        self.duration_scheduler = sched.scheduler()
         
     
     def perform_test(self, test_config: TestConfiguration):
@@ -109,39 +110,44 @@ class TestExecutor:
         # Create clients
         self._create_clients()
         
+        # TODO Generate subscriptions and purposes if needed
+        
+        # Determine which topic/purposes each client will publish to
+        self._assign_publication_topics_and_purposes()
+        
         # Connect clients
         self._connect_initial_clients()
         
-        # TODO: Subscribe clients
-        
-        # TODO: Register publication purposes (if needed by method)
-        
         # == Setup scheduler tasks, timing is in seconds and needs to be divided by 1000 ==
         # Publish task
-        ischedule.schedule(self._publish_from_clients, interval=(test_config.pub_period_ms / 1000))
+        ischedule.schedule(self._publish_from_clients, interval=0.5)
         
         # Connect task
         if test_config.reconnect_period_ms > 0:
-            ischedule.schedule(self._reconnect_clients, interval=(test_config.reconnect_period_ms / 1000))
+            ischedule.schedule(self._reconnect_clients, interval=(test_config.reconnect_period_ms / 1000.0))
         
-        # Disconnect task - Lowest priority of 3
+        # Disconnect task
         if test_config.disconnect_period_ms > 0:
-            ischedule.schedule(self._disconnect_clients, interval=(test_config.disconnect_period_ms / 1000))
+            ischedule.schedule(self._disconnect_clients, interval=(test_config.disconnect_period_ms / 1000.0))
+            
+        # TODO: Add purpose reshuffle
         
         # == Main test loop ==
         # Calculate end time
-        end_time = time.monotonic() + (test_config.test_duration_ms / 1000) # Convert to seconds
-        
+        end_time = time.monotonic() + (test_config.test_duration_ms / 1000.0) # Convert to seconds
+                
         # Start scheduler processing
         self.stop_event.clear()
-        ischedule.run_loop(stop_event=self.stop_event)
         
         # Set event to be triggered at the test duration end
         self.duration_scheduler.enterabs(end_time, 1, self._end_test)
+        stop_thread = threading.Thread(target=self.duration_scheduler.run)
+        stop_thread.start()
         
-        # Block until stop
-        self.stop_event.wait()
-        
+        # Start the threads
+        # NOTE this must be done AFTER the scheduler above, or it won't terminate
+        ischedule.run_loop(stop_event=self.stop_event)
+
         # Clear scheduled tasks for next loop start
         ischedule.reset()
         
@@ -158,7 +164,6 @@ class TestExecutor:
             
     def _end_test(self):
         # Ending just means triggering the stop event
-        print("STOPPING")
         self.stop_event.set()
         
         
@@ -171,13 +176,16 @@ class TestExecutor:
             name = f"{self.my_id}__{self.current_config.name}__{i}"
             client = GlobalDefs.CLIENT_MODULE.create_v5_client(name)
             
+            # Assign callback
+            client.on_publish = self._on_publish
+            
             # Add to all clients
             test_client = self.TestClient(client, name)
             client.user_data_set(test_client) # Set reference to client data
             self.all_clients.append(test_client)
             
             
-    def _connect_initial_clients(self,) -> None:
+    def _connect_initial_clients(self) -> None:
         
         # Connect the specified number of clients
         init_connected_client_count = (int)(self.current_config.client_count * self.current_config.pct_connected_clients_on_init)
@@ -191,6 +199,86 @@ class TestExecutor:
                 test_client.client.loop_start()
             else:
                 raise RuntimeError(f"Failed to connect client {test_client.name}")
+            
+            
+    def _subscribe_initial_clients(self) -> None:
+        
+        # All connected clients should have a subscription
+        connected_clients = [client for client in self.all_clients if client.is_connected]
+        
+        for test_client in connected_clients:
+            self._subscribe_client(test_client)
+            
+                
+    def _subscribe_client(self, test_client: TestClient):
+
+        # Check if topics already exist, if so resubscribe to these
+        if len(test_client.subscribed_topics) > 0:
+            
+            for topic in test_client.subscribed_topics:
+                purpose_for_subscription = test_client.subscribed_topics[topic]
+                
+                result_code, mid = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(test_client.client, self.method, self._on_data_message_recv, 
+                                                                                          topic, purpose_for_subscription)
+                if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
+                    # Log and store
+                    GlobalDefs.LOGGING_MODULE.log_subscribe(time.time(), self.my_id, test_client.name, topic, purpose_for_subscription)
+                else:
+                    raise RuntimeError(f"Failed to subscribe on {topic} with purpose {purpose_for_subscription}")
+        
+        # If not, determine new topics and purpose to subscribe on
+        else:
+            # Determine the specified number of topics to connect to 
+            topics_for_subscription_count = (int)(len(self.current_config.subscribe_topic_list) * self.current_config.pct_topics_per_client)
+            topics_for_subscription = random.sample(self.current_config.subscribe_topic_list, topics_for_subscription_count)
+            
+            for topic in topics_for_subscription:
+            
+                # Select a purpose filter for this topic
+                purpose_for_subscription = random.choice(self.current_config.purpose_list)
+                
+                result_code, mid = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(test_client.client, self.method, self._on_data_message_recv, 
+                                                                                          topic, purpose_for_subscription)
+                
+                if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
+                    # Log and store
+                    GlobalDefs.LOGGING_MODULE.log_subscribe(time.time(), self.my_id, test_client.name, topic, purpose_for_subscription)
+                    test_client.subscribed_topics[topic] = purpose_for_subscription
+                else:
+                    raise RuntimeError(f"Failed to subscribe on {topic} with purpose {purpose_for_subscription}")
+                
+                
+    def _assign_publication_topics_and_purposes(self) -> None:
+        
+        # Do this for all clients
+        for test_client in self.all_clients:
+            
+            # Find the specified number of topics
+            topics_for_subscription_count = (int)(len(self.current_config.publish_topic_list) * self.current_config.pct_topics_per_client)
+            topics_for_subscription = random.sample(self.current_config.publish_topic_list, topics_for_subscription_count)
+            
+            for topic in topics_for_subscription:
+                # Assign a purpose
+                purpose_for_publication = random.choice(self.current_config.purpose_list)
+                test_client.publish_topics[topic] = purpose_for_publication
+                
+                
+    def _register_initial_publication_purposes(self) -> None:
+        
+        # All connected clients should have a publication purpose sent
+        connected_clients = [client for client in self.all_clients if client.is_connected]
+        
+        for test_client in connected_clients:
+            self._register_initial_publication_purposes_for_client(test_client)
+            
+                
+    def _register_initial_publication_purposes_for_client(self, test_client: TestClient) -> None:
+
+        # All clients have already had this done
+        for topic in test_client.publish_topics:
+            # Prep publications (if the method needs it)
+            GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(test_client.client, self.method, topic, test_client.publish_topics[topic])
+            
             
     def _disconnect_clients(self) -> None:
         
@@ -225,10 +313,10 @@ class TestExecutor:
                 test_client.client.loop_start()
             else:
                 raise RuntimeError(f"Failed to connect client {test_client.name}")
-        
+            
     
     def _publish_from_clients(self):
-        
+                
         # Find connected clients
         connected_clients = [client for client in self.all_clients if client.is_connected]
         
@@ -240,9 +328,9 @@ class TestExecutor:
             
             # Publish on specified number of topics
             topics_to_publish_on_count = (int)(len(test_client.publish_topics) * self.current_config.pct_topics_per_pub)
-            topics_to_publish_on = random.sample(test_client.publish_topics, topics_to_publish_on_count)
+            topics_to_publish_on = random.sample(sorted(test_client.publish_topics.keys()), topics_to_publish_on_count)
             
-            for topic, purpose in topics_to_publish_on:
+            for topic in topics_to_publish_on:
                 
                 # Generate a payload to simulate variable data (if requested)
                 payload = None
@@ -251,8 +339,11 @@ class TestExecutor:
                     payload = random.randbytes(num_bytes)
                 
                 results = GlobalDefs.CLIENT_MODULE.publish_with_purpose(test_client.client, self.method, topic, 
-                                                                        purpose, qos=self.current_config.qos, payload=payload)
-            
+                                                                        test_client.publish_topics[topic], qos=self.current_config.qos, payload=payload)
+                
+                for message_info, topic in results:
+                    self.pending_publishes[message_info.mid] = (topic, test_client.publish_topics[topic], "DATA")
+                    
             
     # On action functions
     def _on_connect(self, client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags, reason_code: ReasonCode, properties: Properties):   
@@ -260,7 +351,36 @@ class TestExecutor:
             # Userdata is a TestClient object
             userdata.is_connected = True
             
+            # Log
+            GlobalDefs.LOGGING_MODULE.log_connect(time.time(), self.my_id, userdata.name)
+            
+            # Resubscribe clients
+            self._subscribe_client(userdata)
+        
+            # Reestablish publication purpose
+            self._register_initial_publication_purposes_for_client(userdata)
+            
+            
     def _on_disconnect(self, client: mqtt.Client, userdata: Any, flags: mqtt.DisconnectFlags, reason_code: ReasonCode, properties: Properties):
         if reason_code == 0: # Success
             # Userdata is a TestClient object
             userdata.is_connected = False
+            
+            # Log
+            GlobalDefs.LOGGING_MODULE.log_disconnect(time.time(), self.my_id, userdata.name)
+    
+    def _on_publish(self, client: mqtt.Client, userdata: TestClient, mid:int, reason_code: ReasonCode, properties: Properties):    
+        
+        # Check if message exists and was successful
+        if mid in self.pending_publishes:    
+                   
+            if reason_code == 0:
+                topic, purpose, message_type = self.pending_publishes[mid]
+                
+                # Log message
+                GlobalDefs.LOGGING_MODULE.log_publish(time.time(), self.my_id, userdata.name, mid, topic, purpose, message_type)
+                
+            
+    def _on_data_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):    
+        # Log message
+        GlobalDefs.LOGGING_MODULE.log_recv(time.time(), self.my_id, userdata.name, message.mid, message.topic, "DATA")

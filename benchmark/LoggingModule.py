@@ -9,6 +9,7 @@ class ResultLogger:
     
     SEED_LABEL: str = "SET_SEED"
     CONNECT_LABEL: str = "CONNECT"
+    DISCONNECT_LABEL: str = "DISCONNECT"
     SUBSCRIBE_LABEL: str = "SUBSCRIBE"
     PUBLISH_LABEL: str = "PUBLISH"
     RECV_LABEL: str = "RECV"
@@ -111,17 +112,25 @@ class ResultLogger:
     
     # TODO finalize these
     def log_seed(self, seed):
-        message = f"{self.SEED_LABEL}#{seed}"
+        message = f"{self.SEED_LABEL}*{seed}"
         self.log_queue.put(message)
     
     def log_connect(self, timestamp, benchmark_id, client_id):
-        message = f"{self.CONNECT_LABEL}#{timestamp}#{benchmark_id}#{client_id}"
+        message = f"{self.CONNECT_LABEL}*{timestamp}*{benchmark_id}*{client_id}"
+        self.log_queue.put(message)
+        
+    def log_disconnect(self, timestamp, benchmark_id, client_id):
+        message = f"{self.DISCONNECT_LABEL}*{timestamp}*{benchmark_id}*{client_id}"
         self.log_queue.put(message)
 
-    def log_subscribe(self, timestamp, benchmark_id, client_id, topic_filter, purpose_filter, subscription_id):
-        message = f"{self.SUBSCRIBE_LABEL}#{timestamp}#{benchmark_id}#{client_id}#{topic_filter}#{purpose_filter}#{subscription_id}"
+    def log_subscribe(self, timestamp, benchmark_id, client_id, topic_filter, purpose_filter):
+        message = f"{self.SUBSCRIBE_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_filter}*{purpose_filter}"
         self.log_queue.put(message)
 
-    def log_publish(self, timestamp, benchmark_id, client_id, topic_name, purpose, msg_type, payload):
-        message = f"{self.PUBLISH_LABEL}#{timestamp}#{benchmark_id}#{client_id}#{topic_name}#{purpose}#{msg_type}#{payload}"
+    def log_publish(self, timestamp, benchmark_id, client_id, message_id, topic_name, purpose, msg_type):
+        message = f"{self.PUBLISH_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{purpose}*{msg_type}"
+        self.log_queue.put(message)
+        
+    def log_recv(self, timestamp, benchmark_id, client_id, message_id, topic_name, msg_type):
+        message = f"{self.RECV_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{msg_type}"
         self.log_queue.put(message)

@@ -47,10 +47,6 @@ class BenchmarkSynchronizer:
         # Subscribe to ready and done topics for each benchmark
         for id in self.benchmark_ready_states.keys():
             
-            # Don't subscribe to this node's topic
-            if id == self.my_id:
-                continue
-            
             # Register subscriptions
             # For broker-unaware purpose filtering, no wildcards can be used
             if method == GlobalDefs.PurposeManagementMethod.PM_0:

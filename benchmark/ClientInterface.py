@@ -66,7 +66,7 @@ def connect_client(client: mqtt.Client, broker_address: str, port: int = 1883,
     # Attempt to send connect packet
     try:
         return client.connect(host=broker_address, port=port, clean_start=clean_start)
-    except Exception as e:
+    except Exception:
         return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN
     
     
@@ -96,7 +96,7 @@ def disconnect_client(client: mqtt.Client, callback: Optional[Callable] = None,
     # Attempt to send connect packet
     try:
         return client.disconnect(reasoncode=reason_code)
-    except Exception as e:
+    except Exception:
         return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN
     
 
@@ -167,9 +167,6 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
             return result, mid  # Return error code and message ID
         except Exception:
             return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
-        
-        finally:
-            return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
 
     # == Method 3 ==
     elif method == GlobalDefs.PurposeManagementMethod.PM_3:
@@ -177,7 +174,7 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
         # Perform a normal subscribe first
         try:
             result, mid = client.subscribe(topic_filter, qos=qos)
-        except Exception as e:
+        except Exception:
             return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
         
         # If it didn't fail, send registration for subscription purpose
@@ -225,7 +222,6 @@ def register_publish_purpose_for_topic(client: mqtt.Client, method: GlobalDefs.P
         property_value = f"{purpose}:{topic}"
         properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
         properties.UserProperty = (GlobalDefs.PROPERTY_MP, property_value)
-        print(f"Regging {property_value}")
         return client.publish(GlobalDefs.REG_BY_MSG_REG_TOPIC, qos=qos, properties=properties)
     
     # == Method 3 ==
