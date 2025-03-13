@@ -78,17 +78,25 @@ class BenchmarkSynchronizer:
         fields = message.payload.decode().split(':')
         id = fields[0]
         status = fields[1]
-
-        print(f"Recv {topic} - {id} - {status}")
         
         # Set fields as needed for topic
         if topic.startswith(self.READY_TOPIC_PREFIX):
-            if id in self.benchmark_ready_states and status == "READY":
+            if id in self.benchmark_ready_states and status == "READY" and not self.benchmark_ready_states[id]:
                 self.benchmark_ready_states[id] = True
+                
+                # Log the status of benchmarks ready, including the total number
+                benchmark_total_count = len(self.benchmark_ready_states)
+                benchmark_ready_count = sum(1 for x in self.benchmark_ready_states.values() if x == True)
+                print(f"{id} READY ({benchmark_ready_count}/{benchmark_total_count})")
             
         elif topic.startswith(self.DONE_TOPIC_PREFIX):
-            if id in self.benchmark_done_states and status == "DONE":
+            if id in self.benchmark_done_states and status == "DONE" and not self.benchmark_done_states[id]:
                 self.benchmark_done_states[id] = True   
+                
+                # Log the status of benchmarks ready, including the total number
+                benchmark_total_count = len(self.benchmark_done_states)
+                benchmark_done_count = sum(1 for x in self.benchmark_done_states.values() if x)
+                print(f"{id} DONE ({benchmark_done_count}/{benchmark_total_count})")
         
     
     def _notify_ready(self, method: GlobalDefs.PurposeManagementMethod):

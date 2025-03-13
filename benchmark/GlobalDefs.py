@@ -60,6 +60,7 @@ PROPERTY_SP: str = "PF-SP"
 CLIENT_FUNCTIONS: List[str] = [  
     "create_v5_client", 
     "connect_client", 
+    "disconnect_client",
     "subscribe_with_purpose_filter",
     "register_publish_purpose_for_topic", 
     "publish_with_purpose"

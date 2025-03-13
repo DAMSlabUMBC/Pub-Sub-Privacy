@@ -6,6 +6,12 @@ from typing import TextIO
 from GlobalDefs import ExitCode
 
 class ResultLogger:
+    
+    SEED_LABEL: str = "SET_SEED"
+    CONNECT_LABEL: str = "CONNECT"
+    SUBSCRIBE_LABEL: str = "SUBSCRIBE"
+    PUBLISH_LABEL: str = "PUBLISH"
+    RECV_LABEL: str = "RECV"
 
     running: bool = False
     file_handle: TextIO | None = None
@@ -104,14 +110,18 @@ class ResultLogger:
         return
     
     # TODO finalize these
+    def log_seed(self, seed):
+        message = f"{self.SEED_LABEL}#{seed}"
+        self.log_queue.put(message)
+    
     def log_connect(self, timestamp, benchmark_id, client_id):
-        message = f"CONNECT#{timestamp}#{benchmark_id}#{client_id}"
+        message = f"{self.CONNECT_LABEL}#{timestamp}#{benchmark_id}#{client_id}"
         self.log_queue.put(message)
 
     def log_subscribe(self, timestamp, benchmark_id, client_id, topic_filter, purpose_filter, subscription_id):
-        message = f"SUBSCRIBE#{timestamp}#{benchmark_id}#{client_id}#{topic_filter}#{purpose_filter}#{subscription_id}"
+        message = f"{self.SUBSCRIBE_LABEL}#{timestamp}#{benchmark_id}#{client_id}#{topic_filter}#{purpose_filter}#{subscription_id}"
         self.log_queue.put(message)
 
     def log_publish(self, timestamp, benchmark_id, client_id, topic_name, purpose, msg_type, payload):
-        message = f"PUBLISH#{timestamp}#{benchmark_id}#{client_id}#{topic_name}#{purpose}#{msg_type}#{payload}"
+        message = f"{self.PUBLISH_LABEL}#{timestamp}#{benchmark_id}#{client_id}#{topic_name}#{purpose}#{msg_type}#{payload}"
         self.log_queue.put(message)

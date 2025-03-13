@@ -1,4 +1,5 @@
 import paho.mqtt.client as mqtt
+from paho.mqtt.reasoncodes import ReasonCode
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
 from typing import Callable, Optional, Tuple, List
 import GlobalDefs
@@ -67,6 +68,37 @@ def connect_client(client: mqtt.Client, broker_address: str, port: int = 1883,
         return client.connect(host=broker_address, port=port, clean_start=clean_start)
     except Exception as e:
         return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN
+    
+    
+"""Attempts to disconnect the client from a broker
+
+Parameters
+----------
+client : paho.mqtt.client.Client
+    The client to connect
+callback : function
+    A function to call on disconnect
+reason_code: paho.mqtt.reasoncodes.ReasonCode
+    The reason for the disconnect
+
+Returns
+----------
+paho.mqtt.client.MQTTErrorCode
+    The return code of the disconnect attempt
+"""
+def disconnect_client(client: mqtt.Client, callback: Optional[Callable] = None, 
+                      reason_code: ReasonCode | None = None) -> mqtt.MQTTErrorCode:
+        
+    # We don't need to do any additional processing before using the callbacks, so we can set those directly
+    if callback is not None:
+        client.on_disconnect = callback
+
+    # Attempt to send connect packet
+    try:
+        return client.disconnect(reasoncode=reason_code)
+    except Exception as e:
+        return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN
+    
 
 """Attempts to SUBSCRIBE client to a topic filter in MQTT with a specified purpose filter
 
