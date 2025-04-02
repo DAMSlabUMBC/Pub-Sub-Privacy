@@ -1,5 +1,5 @@
-FROM python:3.13-slim
+FROM python:3.9-slim
 WORKDIR /app
-COPY . /app
-RUN pip install --no-cache-dir -r requirements.txt
-CMD ["python", "TestManagementModule.py"]
+COPY . .
+RUN pip install -r requirements.txt
+ENTRYPOINT ["python", "Benchmark.py"]
