@@ -52,7 +52,7 @@ def configure_and_run_tests(config: str, broker_address: str, broker_port: int, 
     # All Ready - Simulate some test work
     print(f"{my_id} starting benchmark work...")
     
-    test_config = TestConfiguration("Test 1", 5000, 10)
+    test_config = TestConfiguration("Test 1", 500, 10)
     #test_config.pct_to_disconnect = 0.4
     #test_config.pct_to_reconnect = 0.5
     #test_config.pct_to_publish_on = 0.5
