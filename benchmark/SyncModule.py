@@ -111,7 +111,10 @@ class BenchmarkSynchronizer:
 
             # Wait until all benchmarks are ready and return True.
             if all(self.benchmark_ready_states.values()):
-                 return True
+                return True
+            
+            if not self.client.is_connected():
+                return False
 
             # Sleep to prevent busy-waiting
             sleep(1)            
@@ -125,7 +128,10 @@ class BenchmarkSynchronizer:
 
             # Wait until all benchmarks are done and return True.
             if all(self.benchmark_done_states.values()):
-                 return True
+                return True
+            
+            if not self.client.is_connected():
+                return False
 
             # Sleep to prevent busy-waiting
             sleep(1) 

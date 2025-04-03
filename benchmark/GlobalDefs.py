@@ -41,6 +41,7 @@ class ExitCode(IntEnum):
     BAD_CLIENT_API = 3
     FAILED_TO_INIT_SYNC = 4
     FAILED_TO_INIT_LOGGING = 5
+    UNEXP_SYNC_CLIENT_DISCONNECT = 6
     UNKNOWN_ERROR = 99
 
 # These should be assigned as created
@@ -55,6 +56,8 @@ REG_BY_MSG_REG_TOPIC: str = "$PF/purpose_management"
 
 PROPERTY_MP: str = "PF-MP"
 PROPERTY_SP: str = "PF-SP"
+PROPERTY_ID: str = "PF-ClientID"
+PROPERTY_CONSENT: str = "PF-Allow"
 
 # Required functions for the client
 CLIENT_FUNCTIONS: List[str] = [  

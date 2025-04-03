@@ -47,7 +47,12 @@ def configure_and_run_tests(config: str, broker_address: str, broker_port: int, 
     
     # Notify Ready and Wait
     print(f"{my_id} waiting...")
-    GlobalDefs.SYNC_MODULE.notify_and_wait_for_ready(method)
+    ready = GlobalDefs.SYNC_MODULE.notify_and_wait_for_ready(method)
+    
+    if not ready:
+        print(f"{my_id} syncronization client disconnected improperly. Aborting.")
+        sys.exit(GlobalDefs.ExitCode.UNEXP_SYNC_CLIENT_DISCONNECT)
+
     
     # All Ready - Simulate some test work
     print(f"{my_id} starting benchmark work...")
@@ -65,7 +70,11 @@ def configure_and_run_tests(config: str, broker_address: str, broker_port: int, 
     executor.perform_test(test_config)
     
     # Notify Done and Wait
-    GlobalDefs.SYNC_MODULE.notify_and_wait_for_done(method)
+    ready = GlobalDefs.SYNC_MODULE.notify_and_wait_for_done(method)
+
+    if not ready:
+        print(f"{my_id} syncronization client disconnected improperly. Aborting.")
+        sys.exit(GlobalDefs.ExitCode.UNEXP_SYNC_CLIENT_DISCONNECT)
     
     GlobalDefs.LOGGING_MODULE.shutdown()
     

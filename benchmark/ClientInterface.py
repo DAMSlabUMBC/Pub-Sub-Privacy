@@ -182,8 +182,12 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
         
         # If topic contains a wildcard, it needs to be replaced
         sp_reg_topic = sp_reg_topic.replace("#", "HASH").replace("+","PLUS")
+
+        properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
         
-        client.publish(sp_reg_topic, qos=qos)
+        client.publish(sp_reg_topic, qos=qos, properties=properties)
         
         return result, mid  # Return error code and message ID
         
@@ -221,7 +225,9 @@ def register_publish_purpose_for_topic(client: mqtt.Client, method: GlobalDefs.P
         # Send registration containing desired MP to the registration topic
         property_value = f"{purpose}:{topic}"
         properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
         properties.UserProperty = (GlobalDefs.PROPERTY_MP, property_value)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
         return client.publish(GlobalDefs.REG_BY_MSG_REG_TOPIC, qos=qos, properties=properties)
     
     # == Method 3 ==
@@ -229,7 +235,12 @@ def register_publish_purpose_for_topic(client: mqtt.Client, method: GlobalDefs.P
         
         # Send registration to custom registration topic
         mp_reg_topic = f"{GlobalDefs.REG_BY_TOPIC_PUB_REG_TOPIC}/{topic}[{purpose}]"
-        return client.publish(mp_reg_topic, qos=qos)
+
+        properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
+
+        return client.publish(mp_reg_topic, qos=qos, properties=properties)
         
     # Not required if method is invalid
     return None
@@ -283,7 +294,12 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
 
         # Publish to each topic
         for curr_topic in topic_list:
-            result = client.publish(curr_topic, qos=qos, retain=retain, payload=payload)
+
+            properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
+            properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+            properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
+
+            result = client.publish(curr_topic, qos=qos, retain=retain, payload=payload, properties=properties)
             ret_list.append((result, curr_topic))
     
     # == Method 1 ==
@@ -291,16 +307,22 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
         
         # Publish with required MP as a property
         properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
         properties.UserProperty = (GlobalDefs.PROPERTY_MP, purpose)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
         
         msg_info = client.publish(topic, payload, qos=qos, retain=retain, properties=properties)
         return [(msg_info, topic)]  # Return list of (message info, topic) tuples
     
     # == Methods 2 and 3 == #
     elif method == GlobalDefs.PurposeManagementMethod.PM_2 or method == GlobalDefs.PurposeManagementMethod.PM_3:
+
+        properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
         
         # This is just a normal publish
-        msg_info = client.publish(topic, payload, qos=qos, retain=retain)
+        msg_info = client.publish(topic, payload, qos=qos, retain=retain, properties=properties)
         return [(msg_info, topic)]  # Return list of (message info, topic) tuples
         
     # Not required if method is invalid
