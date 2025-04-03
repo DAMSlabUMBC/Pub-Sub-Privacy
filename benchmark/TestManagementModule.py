@@ -14,7 +14,7 @@ def configure_and_run_tests(config: str, broker_address: str, broker_port: int, 
     my_id = os.path.basename(config).replace(".cfg", "")
     #existing_benchmarks = ["benchmark-1", "benchmark-2"]  # TODO: Read from config or CLI in the future
     method = GlobalDefs.PurposeManagementMethod.PM_1
-    existing_benchmarks = ["benchmark-1"]
+    existing_benchmarks = ["benchmark-PM_1-1","benchmark-PM_1-2"]
 
     # TODO: Read Config (for future dynamic benchmark list)
 

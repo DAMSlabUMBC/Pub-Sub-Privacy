@@ -9,22 +9,30 @@ def run_topology():
     broker1 = net.addDocker(
         'bk1',
         dimage='dams-mosquitto',
+        dcmd='/usr/local/sbin/mosquitto -c /etc/mosquitto/mosquitto.conf',
+        ip='10.0.0.251',
         volumes=["/opt/mqtt_brokers/benchmark/mosquitto1.conf:/etc/mosquitto/mosquitto.conf"]
     )
     broker2 = net.addDocker(
         'bk2',
         dimage='dams-mosquitto',
+        dcmd='/usr/local/sbin/mosquitto -c /etc/mosquitto/mosquitto.conf',
+        ip='10.0.0.252',
         volumes=["/opt/mqtt_brokers/benchmark/mosquitto2.conf:/etc/mosquitto/mosquitto.conf"]
     )
     broker3 = net.addDocker(
         'bk3',
         dimage='dams-mosquitto',
+        dcmd='/usr/local/sbin/mosquitto -c /etc/mosquitto/mosquitto.conf',
+        ip='10.0.0.253',
         volumes=["/opt/mqtt_brokers/benchmark/mosquitto3.conf:/etc/mosquitto/mosquitto.conf"]
     )
 
     bench = net.addDocker(
         'bench',
-        dimage='benchmark-runner'
+        dimage='benchmark-runner',
+        ip='10.0.0.10',
+        volumes=["/opt/mqtt_brokers/benchmark:/benchmark"]
     )
 
     # link them all
@@ -34,16 +42,16 @@ def run_topology():
 
     net.start()
 
-    # Optionally test each
-    bench.cmdPrint("ping -c3 bk1")
-    bench.cmdPrint("ping -c3 bk2")
-    bench.cmdPrint("ping -c3 bk3")
+    # Retrieve the IP address of broker1
+    broker1_ip = broker1.IP()
 
-    # Then run the benchmark on whichever one you want
-    bench.cmdPrint("python3 TestManagementModule.py --config benchmark-1.cfg --host bk1 --port 1883 --log /tmp/bk1.log")
-    # Other ones
-    # bench.cmdPrint("python3 TestManagementModule.py --config benchmark-2.cfg --host bk2 --port 1883 --log /tmp/bk2.log")
-    # bench.cmdPrint("python3 TestManagementModule.py --config benchmark-3.cfg --host bk3 --port 1883 --log /tmp/bk3.log")
+    # Then run the benchmarks on whichever one you want
+    command = f"python3 /benchmark/Benchmark.py run /benchmark/benchmark-PM_1-1.cfg {broker1_ip}"
+    print("Running benchmark with command: ", command)
+    command1 = f"python3 /benchmark/Benchmark.py run /benchmark/benchmark-PM_1-2.cfg {broker1_ip}"
+    print("Running benchmark with command: ", command1)
+    print(bench.cmdPrint(command))
+    print(bench.cmdPrint(command1))
 
     input("Press Enter to stop network...")
     net.stop()
