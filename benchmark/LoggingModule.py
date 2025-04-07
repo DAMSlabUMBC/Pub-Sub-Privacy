@@ -129,18 +129,18 @@ class ResultLogger:
         message = f"{self.SUBSCRIBE_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_filter}*{purpose_filter}"
         self.log_queue.put(message)
 
-    def log_publish(self, timestamp, benchmark_id, client_id, message_id, topic_name, purpose, msg_type):
-        message = f"{self.PUBLISH_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{purpose}*{msg_type}"
+    def log_publish(self, timestamp, benchmark_id, client_id, corr_data, topic_name, purpose, msg_type):
+        message = f"{self.PUBLISH_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_name}*{purpose}*{msg_type}*{corr_data}"
         self.log_queue.put(message)
         
-    def log_operation_publish(self, timestamp, benchmark_id, client_id, message_id, topic_name, purpose, msg_type, correlation_data):
-        message = f"{self.OP_PUBLISH_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{purpose}*{msg_type}*{correlation_data}"
+    def log_operation_publish(self, timestamp, benchmark_id, client_id, corr_data, topic_name, purpose, msg_type):
+        message = f"{self.OP_PUBLISH_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_name}*{purpose}*{msg_type}*{corr_data}"
         self.log_queue.put(message)
         
-    def log_recv(self, timestamp, benchmark_id, client_id, message_id, topic_name, msg_type):
-        message = f"{self.RECV_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{msg_type}"
+    def log_recv(self, timestamp, benchmark_id, client_id, corr_data, topic_name, msg_type):
+        message = f"{self.RECV_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_name}*{msg_type}*{corr_data}"
         self.log_queue.put(message)
         
-    def log_operation_recv(self, timestamp, benchmark_id, client_id, message_id, topic_name, msg_type, correlation_data):
-        message = f"{self.OP_RECV_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{msg_type}*{correlation_data}"
+    def log_operation_recv(self, timestamp, benchmark_id, client_id, corr_data, topic_name, msg_type):
+        message = f"{self.OP_RECV_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_name}*{msg_type}*{corr_data}"
         self.log_queue.put(message)

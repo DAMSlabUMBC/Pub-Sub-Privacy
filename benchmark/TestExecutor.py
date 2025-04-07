@@ -38,7 +38,9 @@ class TestConfiguration:
     topic_count: int = 0
     topic_filter_count: int = 0
     
-    # === Purpose information ===   
+    # === Purpose information ===
+    purpose_shuffle_period_ms: int = 0
+    purpose_shuffle_chance: float = 0.0
     publish_purpose_list: List[str] = list()
     subscribe_purpose_list: List[str] = list()
     
@@ -55,7 +57,7 @@ class TestConfiguration:
     max_payload_length_bytes: int = 1024
     
     # === Operation information ===
-    pct_publications_as_ops: float = 0.0
+    op_send_chance: float = 0.0
     c1_reg_operations: List[str] = list()
     possible_operations: List[str] = list()
     
@@ -71,13 +73,20 @@ class TestExecutor:
         client: mqtt.Client
         name: str
         subscribed_topics: Dict[str, str] = dict() # Maps topic filter to purpose filter
-        publish_topics: Dict[str, str] = dict() # Maps topic to purpose filter
+        publish_topics: Dict[str, str] = dict() # Maps topic to purpose
         is_connected: bool = False
         has_set_c1_ops: bool = False
+        msg_send_counter: int = 0
+        message_id_to_send_counter: Dict[int, int] = dict()
         
         def __init__(self, client: mqtt.Client, name: str):
             self.client = client
             self.name = name
+            
+        def get_send_counter(self) -> int:
+            ret_val = self.msg_send_counter
+            self.msg_send_counter = self.msg_send_counter + 1
+            return ret_val
     
     my_id: str
     broker_address: str
@@ -152,7 +161,9 @@ class TestExecutor:
         if test_config.disconnect_period_ms > 0:
             ischedule.schedule(self._disconnect_clients, interval=(test_config.disconnect_period_ms / 1000.0))
             
-        # TODO: Add purpose reshuffle
+        # Shuffle purpose task
+        if test_config.purpose_shuffle_period_ms > 0:
+            ischedule.schedule(self._shuffle_publication_purposes, interval=(test_config.purpose_shuffle_period_ms / 1000.0))
         
         # == Main test loop ==
         # Calculate end time
@@ -291,13 +302,12 @@ class TestExecutor:
         for test_client in self.all_clients:
             
             # Find the specified number of topics
-            topics_for_subscription_count = (int)(len(self.current_config.publish_topic_list) * self.current_config.pct_topics_per_client)
-            topics_for_subscription = random.sample(self.current_config.publish_topic_list, topics_for_subscription_count)
+            topics_for_publication_count = (int)(len(self.current_config.publish_topic_list) * self.current_config.pct_topics_per_client)
+            topics_for_publication = random.sample(self.current_config.publish_topic_list, topics_for_publication_count)
             
-            for topic in topics_for_subscription:
+            for topic in topics_for_publication:
                 # Assign a purpose
                 purpose_for_publication = random.choice(self.current_config.publish_purpose_list)
-                print(f"Chose {purpose_for_publication} for {topic} for client {test_client.name}")
                 test_client.publish_topics[topic] = purpose_for_publication
                    
                 
@@ -315,9 +325,11 @@ class TestExecutor:
         if test_client.has_set_c1_ops:
             return
         
-        for c1_op in self.current_config.c1_reg_operations:
-            GlobalDefs.CLIENT_MODULE.publish_operation_request(test_client.client, self.method, c1_op)
-            test_client.has_set_c1_ops = True
+        # Not used if not broker-modifying
+        if self.method is not GlobalDefs.PurposeManagementMethod.PM_0 and self.method is not GlobalDefs.PurposeManagementMethod.PM_1:
+            for c1_op in self.current_config.c1_reg_operations:
+                GlobalDefs.CLIENT_MODULE.publish_operation_request(test_client.client, self.method, c1_op, test_client.get_send_counter())
+                test_client.has_set_c1_ops = True
                 
             
     def _disconnect_clients(self) -> None:
@@ -337,7 +349,6 @@ class TestExecutor:
             
             
     def _disconnect_all_clients(self) -> None:
-        
         # Find connected clients
         connected_clients = [client for client in self.all_clients if client.is_connected]
             
@@ -346,7 +357,6 @@ class TestExecutor:
     
     
     def _reconnect_clients(self) -> None:
-        
         # Find disconnected clients
         disconnected_clients = [client for client in self.all_clients if not client.is_connected]
                 
@@ -363,9 +373,21 @@ class TestExecutor:
             else:
                 raise RuntimeError(f"Failed to connect client {test_client.name}")
             
+    def _shuffle_publication_purposes(self) -> None:
+        
+        # Shuffle the purposes for all publications
+        for test_client in self.all_clients:
+            
+            # Check if we should shuffle purposes
+            if(random.random() < self.current_config.purpose_shuffle_chance):      
+                    
+                # Select a new purpose for each topic
+                for topic in test_client.publish_topics:             
+                    purpose_for_publication = random.choice(self.current_config.publish_purpose_list)
+                    test_client.publish_topics[topic] = purpose_for_publication
+            
     
     def _publish_from_clients(self):
-                
         # Find connected clients
         connected_clients = [client for client in self.all_clients if client.is_connected]
         
@@ -376,21 +398,27 @@ class TestExecutor:
         for test_client in clients_to_publish:
             
             # Check if we should also do an operational publish
-            if(random.random() < self.current_config.pct_publications_as_ops):
+            if(random.random() < self.current_config.op_send_chance):
                 self._publish_operation(test_client)
             
             self._publish_data(test_client)
              
                     
     def _publish_operation(self, test_client: TestClient):
+        
+        message_counter = test_client.get_send_counter()
+        
         # Select an operation for this topic
         operation = random.choice(self.current_config.possible_operations)
-        results = GlobalDefs.CLIENT_MODULE.publish_operation_request(test_client.client, self.method, operation)
+        results = GlobalDefs.CLIENT_MODULE.publish_operation_request(test_client.client, self.method, operation, message_counter)
         
         for message_info, topic in results:
             if not test_client.name in self.pending_publishes:
                 self.pending_publishes[test_client.name] = dict()
             self.pending_publishes[test_client.name][message_info.mid] = (topic, GlobalDefs.OP_PURPOSE, operation)
+            
+            # Save message counter for correlations
+            test_client.message_id_to_send_counter[message_info.mid] = message_counter
             
     
     def _publish_data(self, test_client: TestClient):
@@ -405,14 +433,19 @@ class TestExecutor:
             num_bytes = random.randrange(self.current_config.min_payload_length_bytes, self.current_config.max_payload_length_bytes)         
             if num_bytes > 0:
                 payload = random.randbytes(num_bytes)
+                
+            message_counter = test_client.get_send_counter()
             
             results = GlobalDefs.CLIENT_MODULE.publish_with_purpose(test_client.client, self.method, topic, 
-                                                                    test_client.publish_topics[topic], qos=self.current_config.qos, payload=payload)
+                                                                    test_client.publish_topics[topic], qos=self.current_config.qos, payload=payload, correlation_data=message_counter)
             
             for message_info, topic in results:
                 if not test_client.name in self.pending_publishes:
                     self.pending_publishes[test_client.name] = dict()
-                self.pending_publishes[test_client.name][message_info.mid] = (topic, test_client.publish_topics[topic], "DATA")   
+                self.pending_publishes[test_client.name][message_info.mid] = (topic, test_client.publish_topics[topic], "DATA")
+                
+                # Save message counter for correlations
+                test_client.message_id_to_send_counter[message_info.mid] = message_counter
         
         
     ###################################     
@@ -448,24 +481,24 @@ class TestExecutor:
         # Check if message exists and was successful
         if userdata.name in self.pending_publishes:
             if mid in self.pending_publishes[userdata.name]:    
+                
+                corr_data = userdata.message_id_to_send_counter[mid]
                     
                 # If successful
                 if reason_code == 0:
                     topic, purpose, message_type = self.pending_publishes[userdata.name][mid]
                     
-                    # Check if operational or data
+                    # Do not log registrations
+                    if not topic == GlobalDefs.OSYS_TOPIC:
                     
-                    if message_type == "DATA":
-                        # Log message
-                        GlobalDefs.LOGGING_MODULE.log_publish(time.time(), self.my_id, userdata.name, mid, topic, purpose, message_type)
-                    else:
-                        # Check for correlation data
-                        corr_data = "NULL"
-                        if hasattr(properties, "CorrelationData"):
-                            properties.CorrelationData.decode("utf-8")
-                        
-                        # Log message
-                        GlobalDefs.LOGGING_MODULE.log_operation_publish(time.time(), self.my_id, userdata.name, mid, topic, purpose, message_type, corr_data)
+                        # Check if operational or data
+                        if message_type == "DATA":
+                            # Log message
+                            GlobalDefs.LOGGING_MODULE.log_publish(time.time(), self.my_id, userdata.name, corr_data, topic, purpose, message_type)
+                        else:
+                            # Log message
+                            GlobalDefs.LOGGING_MODULE.log_operation_publish(time.time(), self.my_id, userdata.name, corr_data, topic, purpose, message_type)
+                
                 
     def _on_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):
         
@@ -480,14 +513,22 @@ class TestExecutor:
         self._data_message_recv(userdata, message)    
         
     
-    def _data_message_recv(self, userdata: Any, message: mqtt.MQTTMessage):    
+    def _data_message_recv(self, userdata: Any, message: mqtt.MQTTMessage):      
+        
+        # Check for correlation data
+        corr_data = -1
+        if hasattr(message.properties, "CorrelationData"):
+            corr_data = int.from_bytes(message.properties.CorrelationData, byteorder='big', signed=True)
+            
         # Log message
-        GlobalDefs.LOGGING_MODULE.log_recv(time.time(), self.my_id, userdata.name, message.mid, message.topic, "DATA")
+        GlobalDefs.LOGGING_MODULE.log_recv(time.time(), self.my_id, userdata.name, corr_data, message.topic, "DATA")
              
     def _on_operation_message_recv(self, userdata: Any, message: mqtt.MQTTMessage, operation: str):    
         
         # Check for correlation data
-        corr_data = "NULL"
+        corr_data = -1
         if hasattr(message.properties, "CorrelationData"):
-            message.properties.CorrelationData.decode("utf-8")
-        GlobalDefs.LOGGING_MODULE.log_operation_recv(time.time(), self.my_id, userdata.name, message.mid, message.topic, operation, corr_data)
+            corr_data = int.from_bytes(message.properties.CorrelationData, byteorder='big', signed=True)
+            
+        # Log message
+        GlobalDefs.LOGGING_MODULE.log_operation_recv(time.time(), self.my_id, userdata.name, corr_data, message.topic, operation)

@@ -5,9 +5,6 @@ from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
 from typing import Callable, Optional, Tuple, List
 import GlobalDefs
 
-# Used to correlate property requests
-CORRELATION_DATA: int = 1
-
 """Initializes a Paho MQTTv5 client and returns it to the requester
 
 Parameters
@@ -284,7 +281,7 @@ list[tuple[paho.mqtt.client.MQTTErrorCode, str]]
 """
 def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, 
                          topic: str, purpose: Optional[str] = None, qos: int = 0, 
-                         retain: bool = False, payload: str | None = None) -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
+                         retain: bool = False, payload: str | None = None, correlation_data: int | None = None) -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
     
     
     if purpose == None:
@@ -292,13 +289,15 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
         
     ret_list = list()
     
+    properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
+    properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+    properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
+    
+    if correlation_data is not None:
+        properties.CorrelationData = correlation_data.to_bytes()
+    
     # == Method 0 ==
     if method == GlobalDefs.PurposeManagementMethod.PM_0:
-
-        # Overall properties
-        properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
-        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
-        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
         
         # Need to send message to each purpose topic
         described_purposes = GlobalDefs.find_described_purposes(purpose)
@@ -320,20 +319,13 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
     elif method == GlobalDefs.PurposeManagementMethod.PM_1:
         
         # Publish with required MP as a property
-        properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
-        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
         properties.UserProperty = (GlobalDefs.PROPERTY_MP, purpose)
-        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
         
         msg_info = client.publish(topic, payload, qos=qos, retain=retain, properties=properties)
         return [(msg_info, topic)]  # Return list of (message info, topic) tuples
     
     # == Methods 2 and 3 == #
     elif method == GlobalDefs.PurposeManagementMethod.PM_2 or method == GlobalDefs.PurposeManagementMethod.PM_3:
-
-        properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
-        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
-        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
         
         # This is just a normal publish
         msg_info = client.publish(topic, payload, qos=qos, retain=retain, properties=properties)
@@ -343,7 +335,7 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
     return ret_list
 
 
-def publish_operation_request(client: mqtt.Client, method: str, operation: str) -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
+def publish_operation_request(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, operation: str, correlation_data: int | None = None) -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
     
     # Determine topic
     if method == GlobalDefs.PurposeManagementMethod.PM_1:
@@ -352,12 +344,12 @@ def publish_operation_request(client: mqtt.Client, method: str, operation: str) 
         topic = GlobalDefs.OSYS_TOPIC
     
     # Set properties and payload based on operations
-    global CORRELATION_DATA
     properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
     properties.UserProperty = (GlobalDefs.PROPERTY_OPERATION, operation)
     properties.ResponseTopic = f'{GlobalDefs.OP_RESPONSE_TOPIC}/{client._client_id.decode("utf-8")}'
-    properties.CorrelationData = CORRELATION_DATA.to_bytes()
-    CORRELATION_DATA = CORRELATION_DATA + 1
+    
+    if correlation_data is not None:
+        properties.CorrelationData = correlation_data.to_bytes()
    
     if operation == "Informed":
         return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=2)

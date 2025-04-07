@@ -1,7 +1,6 @@
 import yaml
 import os
 import sys
-from pathlib import Path
 from typing import List
 from GlobalDefs import ExitCode, PurposeManagementMethod
 from TestExecutor import TestConfiguration
@@ -197,6 +196,14 @@ class ConfigParser:
             raise Exception(f"topics_per_pub_pct not found for test {test_config.name} config")
         test_config.pct_topics_per_pub = test["topics_per_pub_pct"]
         
+        if not "purpose_shuffle_period_ms" in test:
+            raise Exception(f"purpose_shuffle_period_ms not found for test {test_config.name} config")
+        test_config.purpose_shuffle_period_ms = test["purpose_shuffle_period_ms"]
+        
+        if not "purpose_shuffle_chance" in test:
+            raise Exception(f"purpose_shuffle_chance not found for test {test_config.name} config")
+        test_config.purpose_shuffle_chance = test["purpose_shuffle_chance"]
+        
         if not "min_payload_length_bytes" in test:
             raise Exception(f"min_payload_length_bytes not found for test {test_config.name} config")
         test_config.min_payload_length_bytes = test["min_payload_length_bytes"]
@@ -207,8 +214,8 @@ class ConfigParser:
         
         # Operational information
         # Ops not required, may be empty
-        if "op_send_pct" in test:
-            test_config.pct_publications_as_ops = test["op_send_pct"]
+        if "op_send_chance" in test:
+            test_config.op_send_chance = test["op_send_chance"]
             
         if "c1_reg_ops" in test:
             for op in test["c1_reg_ops"]:
