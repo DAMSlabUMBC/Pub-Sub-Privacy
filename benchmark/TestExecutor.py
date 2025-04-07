@@ -36,13 +36,16 @@ class TestConfiguration:
     # Used to randomly generate topics
     generate_topics: bool = True
     topic_count: int = 0
+    topic_filter_count: int = 0
     
     # === Purpose information ===   
-    purpose_list: List[str] = list()
+    publish_purpose_list: List[str] = list()
+    subscribe_purpose_list: List[str] = list()
     
     # Used to randomly generate purposes
     generate_purposes: bool = True
     purpose_count: int = 0
+    purpose_filter_count: int = 0
     
     # === Publication information ===   
     pct_to_publish_on: float = 1.0
@@ -50,6 +53,11 @@ class TestConfiguration:
     pub_period_ms: int = 500
     min_payload_length_bytes: int = 1
     max_payload_length_bytes: int = 1024
+    
+    # === Operation information ===
+    pct_publications_as_ops: float = 0.0
+    c1_reg_operations: List[str] = list()
+    possible_operations: List[str] = list()
     
     def __init__(self, name:str, test_duration_ms: int, client_count: int):
         self.name = name
@@ -65,6 +73,7 @@ class TestExecutor:
         subscribed_topics: Dict[str, str] = dict() # Maps topic filter to purpose filter
         publish_topics: Dict[str, str] = dict() # Maps topic to purpose filter
         is_connected: bool = False
+        has_set_c1_ops: bool = False
         
         def __init__(self, client: mqtt.Client, name: str):
             self.client = client
@@ -79,7 +88,7 @@ class TestExecutor:
     duration_scheduler: sched.scheduler
     
     all_clients: List[TestClient] = list()
-    pending_publishes: Dict[int, Tuple[str, str, str]] = dict() # message id => (topic, purpose, message_type)
+    pending_publishes: Dict[str, Dict[int, Tuple[str, str, str]]] = dict() # client name => [message id => (topic, purpose, message_type)]
     
     def __init__(self, executor_id: str, broker_address: str, broker_port: int, method: GlobalDefs.PurposeManagementMethod, seed: int | None = None):
         
@@ -90,7 +99,7 @@ class TestExecutor:
         
         # If not supplied, set random seed based on time
         if seed is None:
-            seed = time.time()
+            seed = int(time.time())
             
         #  Seed the random number generator and write seed to log file
         random.seed(seed)
@@ -100,27 +109,40 @@ class TestExecutor:
         self.duration_scheduler = sched.scheduler()
         
     
-    def perform_test(self, test_config: TestConfiguration):
+    def setup_test(self, test_config: TestConfiguration):
         
-        # Need to save this for scheduled functions
-        # but we'll also use in other functions
+        #Create a clean environment for the test
+        self._clear_previous_test_data()
+        
+        # Need to save this for the test
         self.current_config = test_config
         
-        # == Setup ==
-        # Create clients
-        self._create_clients()
+        print(f"Configuring test {test_config.name}")
         
-        # TODO Generate subscriptions and purposes if needed
+        # Create clients
+        print(f"\tSetting up test...")
+        self._create_clients()
         
         # Determine which topic/purposes each client will publish to
         self._assign_publication_topics_and_purposes()
         
         # Connect clients
+        print(f"\tConnecting and configuring initial clients...")
         self._connect_initial_clients()
+        
+        # Give a moment to allow messages to travel
+        time.sleep(1)
+        
+        print(f"Test configured!")
+        
+    
+    def perform_test(self, test_config: TestConfiguration):
+        
+        print(f"Running test {test_config.name}")
         
         # == Setup scheduler tasks, timing is in seconds and needs to be divided by 1000 ==
         # Publish task
-        ischedule.schedule(self._publish_from_clients, interval=0.5)
+        ischedule.schedule(self._publish_from_clients, interval=(test_config.pub_period_ms / 1000.0))
         
         # Connect task
         if test_config.reconnect_period_ms > 0:
@@ -142,25 +164,32 @@ class TestExecutor:
         # Set event to be triggered at the test duration end
         self.duration_scheduler.enterabs(end_time, 1, self._end_test)
         stop_thread = threading.Thread(target=self.duration_scheduler.run)
+        print(f"\tTest will run for {test_config.test_duration_ms / 1000.0} second(s)")
         stop_thread.start()
         
         # Start the threads
         # NOTE this must be done AFTER the scheduler above, or it won't terminate
+        print(f"\tTest started at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}!")
         ischedule.run_loop(stop_event=self.stop_event)
+        
+        print(f"\tTest complete! Cleaning up...")
+        # Give few seconds to finish publications and recieves
+        
+        time.sleep(2)
+        
+        # Disconnect all clients and clean data
+        self._disconnect_all_clients()
+        self._clear_previous_test_data()
 
-        # Clear scheduled tasks for next loop start
+        print(f"Cleanup complete!")
+        
+        
+    def _clear_previous_test_data(self):
+        self.current_config = None
+        self.all_clients = list()
+        self.pending_publishes = dict()
         ischedule.reset()
-        
-        
-        #self.clients: List[Client] = []
-        #self.topics = {"topic1", "topic2", "topic3"}  # Example topics
-        #self.purposes = {"chat", "alert", "update"}  # Example purposes
-        
-        # Randomly select subset of topics for each client
-        #num_topics = random.randint(1, len(self.topics))
-        #subscribed_topics = set(random.sample(list(self.topics), num_topics))
-        #self.clients.append(Client(id=i, subscribed_topics=subscribed_topics))
-            
+
             
     def _end_test(self):
         # Ending just means triggering the stop event
@@ -173,7 +202,7 @@ class TestExecutor:
         # Create the specified number of clients
         for i in range(self.current_config.client_count):    
             
-            name = f"{self.my_id}__{self.current_config.name}__{i}"
+            name = f"{self.my_id}__{self.current_config.name}__C{i}"
             client = GlobalDefs.CLIENT_MODULE.create_v5_client(name)
             
             # Assign callback
@@ -199,18 +228,26 @@ class TestExecutor:
                 test_client.client.loop_start()
             else:
                 raise RuntimeError(f"Failed to connect client {test_client.name}")
-            
-            
-    def _subscribe_initial_clients(self) -> None:
+   
+    def _subscribe_client_for_operations(self, test_client: TestClient):
         
-        # All connected clients should have a subscription
-        connected_clients = [client for client in self.all_clients if client.is_connected]
+        client_id = test_client.name
+        operation_response_topic = f"{GlobalDefs.OP_RESPONSE_TOPIC}/{client_id}"
+        # Subscribe to all operational topics and the default response topic
+        topics = [GlobalDefs.ON_TOPIC, GlobalDefs.ONP_TOPIC + "/" + client_id, GlobalDefs.OR_TOPIC, GlobalDefs.ORS_TOPIC + "/" + client_id, operation_response_topic]
+        purpose_for_subscription = GlobalDefs.OP_PURPOSE
         
-        for test_client in connected_clients:
-            self._subscribe_client(test_client)
-            
+        # Subscribe to each of the non-broker operational topics
+        for topic in topics:
+            result_code, mid = GlobalDefs.CLIENT_MODULE.subscribe_for_operations(test_client.client, self.method, self._on_message_recv, topic)
+            if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
+                # Log and store
+                GlobalDefs.LOGGING_MODULE.log_subscribe(time.time(), self.my_id, test_client.name, topic, purpose_for_subscription)
+            else:
+                raise RuntimeError(f"Failed to subscribe on {topic} with purpose {purpose_for_subscription}")
+        
                 
-    def _subscribe_client(self, test_client: TestClient):
+    def _subscribe_client_for_data(self, test_client: TestClient):
 
         # Check if topics already exist, if so resubscribe to these
         if len(test_client.subscribed_topics) > 0:
@@ -218,8 +255,8 @@ class TestExecutor:
             for topic in test_client.subscribed_topics:
                 purpose_for_subscription = test_client.subscribed_topics[topic]
                 
-                result_code, mid = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(test_client.client, self.method, self._on_data_message_recv, 
-                                                                                          topic, purpose_for_subscription)
+                result_code, mid = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(test_client.client, self.method, self._on_message_recv, 
+                                                                                          topic, purpose_for_subscription, self.current_config.qos)
                 if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
                     # Log and store
                     GlobalDefs.LOGGING_MODULE.log_subscribe(time.time(), self.my_id, test_client.name, topic, purpose_for_subscription)
@@ -235,9 +272,9 @@ class TestExecutor:
             for topic in topics_for_subscription:
             
                 # Select a purpose filter for this topic
-                purpose_for_subscription = random.choice(self.current_config.purpose_list)
+                purpose_for_subscription = random.choice(self.current_config.subscribe_purpose_list)
                 
-                result_code, mid = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(test_client.client, self.method, self._on_data_message_recv, 
+                result_code, mid = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(test_client.client, self.method, self._on_message_recv, 
                                                                                           topic, purpose_for_subscription)
                 
                 if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
@@ -259,18 +296,10 @@ class TestExecutor:
             
             for topic in topics_for_subscription:
                 # Assign a purpose
-                purpose_for_publication = random.choice(self.current_config.purpose_list)
+                purpose_for_publication = random.choice(self.current_config.publish_purpose_list)
+                print(f"Chose {purpose_for_publication} for {topic} for client {test_client.name}")
                 test_client.publish_topics[topic] = purpose_for_publication
-                
-                
-    def _register_initial_publication_purposes(self) -> None:
-        
-        # All connected clients should have a publication purpose sent
-        connected_clients = [client for client in self.all_clients if client.is_connected]
-        
-        for test_client in connected_clients:
-            self._register_initial_publication_purposes_for_client(test_client)
-            
+                   
                 
     def _register_initial_publication_purposes_for_client(self, test_client: TestClient) -> None:
 
@@ -279,6 +308,17 @@ class TestExecutor:
             # Prep publications (if the method needs it)
             GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(test_client.client, self.method, topic, test_client.publish_topics[topic])
             
+            
+    def _register_data_for_c1_operations_for_client(self, test_client: TestClient) -> None:
+        
+        # Nothing else to do
+        if test_client.has_set_c1_ops:
+            return
+        
+        for c1_op in self.current_config.c1_reg_operations:
+            GlobalDefs.CLIENT_MODULE.publish_operation_request(test_client.client, self.method, c1_op)
+            test_client.has_set_c1_ops = True
+                
             
     def _disconnect_clients(self) -> None:
         
@@ -295,6 +335,15 @@ class TestExecutor:
             if result_code != mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
                 raise RuntimeError(f"Failed to disconnect client {test_client.name}")
             
+            
+    def _disconnect_all_clients(self) -> None:
+        
+        # Find connected clients
+        connected_clients = [client for client in self.all_clients if client.is_connected]
+            
+        for test_client in connected_clients:
+            GlobalDefs.CLIENT_MODULE.disconnect_client(test_client.client, callback=self._on_disconnect)
+    
     
     def _reconnect_clients(self) -> None:
         
@@ -326,26 +375,49 @@ class TestExecutor:
         
         for test_client in clients_to_publish:
             
-            # Publish on specified number of topics
-            topics_to_publish_on_count = (int)(len(test_client.publish_topics) * self.current_config.pct_topics_per_pub)
-            topics_to_publish_on = random.sample(sorted(test_client.publish_topics.keys()), topics_to_publish_on_count)
+            # Check if we should also do an operational publish
+            if(random.random() < self.current_config.pct_publications_as_ops):
+                self._publish_operation(test_client)
             
-            for topic in topics_to_publish_on:
-                
-                # Generate a payload to simulate variable data (if requested)
-                payload = None
-                num_bytes = random.randrange(self.current_config.min_payload_length_bytes, self.current_config.max_payload_length_bytes)         
-                if num_bytes > 0:
-                    payload = random.randbytes(num_bytes)
-                
-                results = GlobalDefs.CLIENT_MODULE.publish_with_purpose(test_client.client, self.method, topic, 
-                                                                        test_client.publish_topics[topic], qos=self.current_config.qos, payload=payload)
-                
-                for message_info, topic in results:
-                    self.pending_publishes[message_info.mid] = (topic, test_client.publish_topics[topic], "DATA")
+            self._publish_data(test_client)
+             
                     
+    def _publish_operation(self, test_client: TestClient):
+        # Select an operation for this topic
+        operation = random.choice(self.current_config.possible_operations)
+        results = GlobalDefs.CLIENT_MODULE.publish_operation_request(test_client.client, self.method, operation)
+        
+        for message_info, topic in results:
+            if not test_client.name in self.pending_publishes:
+                self.pending_publishes[test_client.name] = dict()
+            self.pending_publishes[test_client.name][message_info.mid] = (topic, GlobalDefs.OP_PURPOSE, operation)
             
-    # On action functions
+    
+    def _publish_data(self, test_client: TestClient):
+        # Publish on specified number of topics
+        topics_to_publish_on_count = (int)(len(test_client.publish_topics) * self.current_config.pct_topics_per_pub)
+        topics_to_publish_on = random.sample(sorted(test_client.publish_topics.keys()), topics_to_publish_on_count)
+        
+        for topic in topics_to_publish_on:
+            
+            # Generate a payload to simulate variable data (if requested)
+            payload = None
+            num_bytes = random.randrange(self.current_config.min_payload_length_bytes, self.current_config.max_payload_length_bytes)         
+            if num_bytes > 0:
+                payload = random.randbytes(num_bytes)
+            
+            results = GlobalDefs.CLIENT_MODULE.publish_with_purpose(test_client.client, self.method, topic, 
+                                                                    test_client.publish_topics[topic], qos=self.current_config.qos, payload=payload)
+            
+            for message_info, topic in results:
+                if not test_client.name in self.pending_publishes:
+                    self.pending_publishes[test_client.name] = dict()
+                self.pending_publishes[test_client.name][message_info.mid] = (topic, test_client.publish_topics[topic], "DATA")   
+        
+        
+    ###################################     
+    #   CALLBACK FUNCTIONS
+    ###################################
     def _on_connect(self, client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags, reason_code: ReasonCode, properties: Properties):   
         if reason_code == 0: # Success
             # Userdata is a TestClient object
@@ -355,10 +427,12 @@ class TestExecutor:
             GlobalDefs.LOGGING_MODULE.log_connect(time.time(), self.my_id, userdata.name)
             
             # Resubscribe clients
-            self._subscribe_client(userdata)
+            self._subscribe_client_for_operations(userdata)
+            self._subscribe_client_for_data(userdata)
         
-            # Reestablish publication purpose
+            # Reestablish publication purpose and c1 operational data
             self._register_initial_publication_purposes_for_client(userdata)
+            self._register_data_for_c1_operations_for_client(userdata)
             
             
     def _on_disconnect(self, client: mqtt.Client, userdata: Any, flags: mqtt.DisconnectFlags, reason_code: ReasonCode, properties: Properties):
@@ -372,15 +446,48 @@ class TestExecutor:
     def _on_publish(self, client: mqtt.Client, userdata: TestClient, mid:int, reason_code: ReasonCode, properties: Properties):    
         
         # Check if message exists and was successful
-        if mid in self.pending_publishes:    
-                   
-            if reason_code == 0:
-                topic, purpose, message_type = self.pending_publishes[mid]
+        if userdata.name in self.pending_publishes:
+            if mid in self.pending_publishes[userdata.name]:    
+                    
+                # If successful
+                if reason_code == 0:
+                    topic, purpose, message_type = self.pending_publishes[userdata.name][mid]
+                    
+                    # Check if operational or data
+                    
+                    if message_type == "DATA":
+                        # Log message
+                        GlobalDefs.LOGGING_MODULE.log_publish(time.time(), self.my_id, userdata.name, mid, topic, purpose, message_type)
+                    else:
+                        # Check for correlation data
+                        corr_data = "NULL"
+                        if hasattr(properties, "CorrelationData"):
+                            properties.CorrelationData.decode("utf-8")
+                        
+                        # Log message
+                        GlobalDefs.LOGGING_MODULE.log_operation_publish(time.time(), self.my_id, userdata.name, mid, topic, purpose, message_type, corr_data)
                 
-                # Log message
-                GlobalDefs.LOGGING_MODULE.log_publish(time.time(), self.my_id, userdata.name, mid, topic, purpose, message_type)
-                
-            
-    def _on_data_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):    
+    def _on_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):
+        
+        # Check if this is an operational message
+        if hasattr(message.properties, "UserProperty"):
+            for name, value in message.properties.UserProperty:
+                if name == GlobalDefs.PROPERTY_OPERATION:
+                    self._on_operation_message_recv(userdata, message, value)
+                    return
+        
+        # Default to data message
+        self._data_message_recv(userdata, message)    
+        
+    
+    def _data_message_recv(self, userdata: Any, message: mqtt.MQTTMessage):    
         # Log message
         GlobalDefs.LOGGING_MODULE.log_recv(time.time(), self.my_id, userdata.name, message.mid, message.topic, "DATA")
+             
+    def _on_operation_message_recv(self, userdata: Any, message: mqtt.MQTTMessage, operation: str):    
+        
+        # Check for correlation data
+        corr_data = "NULL"
+        if hasattr(message.properties, "CorrelationData"):
+            message.properties.CorrelationData.decode("utf-8")
+        GlobalDefs.LOGGING_MODULE.log_operation_recv(time.time(), self.my_id, userdata.name, message.mid, message.topic, operation, corr_data)

@@ -12,7 +12,9 @@ class ResultLogger:
     DISCONNECT_LABEL: str = "DISCONNECT"
     SUBSCRIBE_LABEL: str = "SUBSCRIBE"
     PUBLISH_LABEL: str = "PUBLISH"
+    OP_PUBLISH_LABEL: str = "PUBLISH_OP"
     RECV_LABEL: str = "RECV"
+    OP_RECV_LABEL: str = "RECV_OP"
 
     running: bool = False
     file_handle: TextIO | None = None
@@ -131,6 +133,14 @@ class ResultLogger:
         message = f"{self.PUBLISH_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{purpose}*{msg_type}"
         self.log_queue.put(message)
         
+    def log_operation_publish(self, timestamp, benchmark_id, client_id, message_id, topic_name, purpose, msg_type, correlation_data):
+        message = f"{self.OP_PUBLISH_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{purpose}*{msg_type}*{correlation_data}"
+        self.log_queue.put(message)
+        
     def log_recv(self, timestamp, benchmark_id, client_id, message_id, topic_name, msg_type):
         message = f"{self.RECV_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{msg_type}"
+        self.log_queue.put(message)
+        
+    def log_operation_recv(self, timestamp, benchmark_id, client_id, message_id, topic_name, msg_type, correlation_data):
+        message = f"{self.OP_RECV_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{message_id}*{topic_name}*{msg_type}*{correlation_data}"
         self.log_queue.put(message)

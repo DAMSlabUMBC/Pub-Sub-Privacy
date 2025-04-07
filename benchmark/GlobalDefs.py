@@ -50,14 +50,25 @@ SYNC_MODULE: 'BenchmarkSynchronizer'
 LOGGING_MODULE: 'ResultLogger'
 
 # These should be assigned to based on the config file
-REG_BY_TOPIC_PUB_REG_TOPIC: str = "$PF/MP_reg"
-REG_BY_TOPIC_SUB_REG_TOPIC: str= "$PF/SP_reg"
-REG_BY_MSG_REG_TOPIC: str = "$PF/purpose_management"
+REG_BY_TOPIC_PUB_REG_TOPIC: str = ""
+REG_BY_TOPIC_SUB_REG_TOPIC: str= ""
+REG_BY_MSG_REG_TOPIC: str = ""
 
 PROPERTY_MP: str = "PF-MP"
 PROPERTY_SP: str = "PF-SP"
 PROPERTY_ID: str = "PF-ClientID"
 PROPERTY_CONSENT: str = "PF-Allow"
+PROPERTY_OPERATION: str = "PF-Operation"
+PROPERTY_OP_INFO: str = "PF-OpInfo"
+
+# Operational topics
+OR_TOPIC: str = ""
+ORS_TOPIC: str = ""
+ON_TOPIC: str = ""
+ONP_TOPIC: str = ""
+OSYS_TOPIC: str = ""
+OP_RESPONSE_TOPIC: str = ""
+OP_PURPOSE: str = ""
 
 # Required functions for the client
 CLIENT_FUNCTIONS: List[str] = [  

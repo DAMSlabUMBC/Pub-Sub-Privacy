@@ -36,7 +36,7 @@ class BenchmarkSynchronizer:
         if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
             self.client = client
         else:
-            raise RuntimeError("Failed to create Syncronization Client")
+            raise RuntimeError("Failed to create Syncronization Client. Ensure the broker is running")
 
         # Attach message handler
         self.client.on_message = self._on_message_recv
@@ -52,16 +52,16 @@ class BenchmarkSynchronizer:
             if method == GlobalDefs.PurposeManagementMethod.PM_0:
                 for benchmark in self.benchmark_ready_states.keys():
                     GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
-                                                            self.READY_TOPIC_PREFIX + benchmark, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
+                                                            self.READY_TOPIC_PREFIX + benchmark, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1, no_local=False)
                     GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
-                                                            self.DONE_TOPIC_PREFIX + benchmark, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
+                                                            self.DONE_TOPIC_PREFIX + benchmark, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1, no_local=False)
                    
             # Can use wildcards for the rest 
             else:
                 GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
-                                                                self.READY_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
+                                                                self.READY_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1, no_local=False)
                 GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
-                                                            self.DONE_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1)
+                                                            self.DONE_TOPIC_FILTER, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1, no_local=False)
         
                 # Prep publications (if the method needs it)
                 GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(self.client, method, self.THIS_NODE_READY_TOPIC, BenchmarkSynchronizer.SYNC_PURPOSE)
@@ -83,7 +83,7 @@ class BenchmarkSynchronizer:
                 # Log the status of benchmarks ready, including the total number
                 benchmark_total_count = len(self.benchmark_ready_states)
                 benchmark_ready_count = sum(1 for x in self.benchmark_ready_states.values() if x == True)
-                print(f"{id} READY ({benchmark_ready_count}/{benchmark_total_count})")
+                print(f"{id} is ready! ({benchmark_ready_count}/{benchmark_total_count})")
             
         elif topic.startswith(self.DONE_TOPIC_PREFIX):
             if id in self.benchmark_done_states and status == "DONE" and not self.benchmark_done_states[id]:
@@ -92,7 +92,7 @@ class BenchmarkSynchronizer:
                 # Log the status of benchmarks ready, including the total number
                 benchmark_total_count = len(self.benchmark_done_states)
                 benchmark_done_count = sum(1 for x in self.benchmark_done_states.values() if x)
-                print(f"{id} DONE ({benchmark_done_count}/{benchmark_total_count})")
+                print(f"{id} is done! ({benchmark_done_count}/{benchmark_total_count})")
         
     
     def _notify_ready(self, method: GlobalDefs.PurposeManagementMethod):
