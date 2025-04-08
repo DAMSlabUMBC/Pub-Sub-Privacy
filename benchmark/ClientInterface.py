@@ -3,6 +3,7 @@ from paho.mqtt.subscribeoptions import SubscribeOptions
 from paho.mqtt.reasoncodes import ReasonCode
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
 from typing import Callable, Optional, Tuple, List
+from math import ceil
 import GlobalDefs
 
 """Initializes a Paho MQTTv5 client and returns it to the requester
@@ -294,7 +295,8 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
     properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
     
     if correlation_data is not None:
-        properties.CorrelationData = correlation_data.to_bytes()
+        required_bytes = ceil(correlation_data.bit_length() / 8.0)
+        properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big')
     
     # == Method 0 ==
     if method == GlobalDefs.PurposeManagementMethod.PM_0:
@@ -349,7 +351,8 @@ def publish_operation_request(client: mqtt.Client, method: GlobalDefs.PurposeMan
     properties.ResponseTopic = f'{GlobalDefs.OP_RESPONSE_TOPIC}/{client._client_id.decode("utf-8")}'
     
     if correlation_data is not None:
-        properties.CorrelationData = correlation_data.to_bytes()
+        required_bytes = ceil(correlation_data.bit_length() / 8.0)
+        properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big')
    
     if operation == "Informed":
         return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=2)
