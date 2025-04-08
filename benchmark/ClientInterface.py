@@ -137,10 +137,10 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
         
     client.on_message = callback  # Set the callback for incoming messages
         
-    # == Method 0 ==
-    if method == GlobalDefs.PurposeManagementMethod.PM_0:
+    # == Method 1 ==
+    if method == GlobalDefs.PurposeManagementMethod.PM_1:
         
-        # Under method 0, purposes are encoded as topics
+        # Under method 1, purposes are encoded as topics
         described_purposes = GlobalDefs.find_described_purposes(purpose_filter)
 
         # Convert the purpose list into topics
@@ -159,8 +159,8 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
             
         return result, mid
     
-    # == Method 1 and 2 ==
-    elif method == GlobalDefs.PurposeManagementMethod.PM_1 or method == GlobalDefs.PurposeManagementMethod.PM_2:
+    # == Method 2 and 3 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_2 or method == GlobalDefs.PurposeManagementMethod.PM_3:
         
         # Purpose filter is supplied on subscription
         properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
@@ -172,8 +172,8 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
         except Exception as e:
             return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
 
-    # == Method 3 ==
-    elif method == GlobalDefs.PurposeManagementMethod.PM_3:
+    # == Method 4 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_4:
         
         # Perform a normal subscribe first
         try:
@@ -229,9 +229,9 @@ paho.mqtt.client.MQTTErrorCode
 def register_publish_purpose_for_topic(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, 
                                        topic: str, purpose: str, qos: int = 0) -> mqtt.MQTTMessageInfo | None:
     
-    # Not required for methods 0/1
-    # == Method 2 == #
-    if method == GlobalDefs.PurposeManagementMethod.PM_2:
+    # Not required for methods 1/2
+    # == Method 3 == #
+    if method == GlobalDefs.PurposeManagementMethod.PM_3:
         
         # Send registration containing desired MP to the registration topic
         property_value = f"{purpose}:{topic}"
@@ -241,8 +241,8 @@ def register_publish_purpose_for_topic(client: mqtt.Client, method: GlobalDefs.P
         properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
         return client.publish(GlobalDefs.REG_BY_MSG_REG_TOPIC, qos=qos, properties=properties)
     
-    # == Method 3 ==
-    elif method == GlobalDefs.PurposeManagementMethod.PM_3:
+    # == Method 4 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_4:
         
         # Send registration to custom registration topic
         mp_reg_topic = f"{GlobalDefs.REG_BY_TOPIC_PUB_REG_TOPIC}/{topic}[{purpose}]"
@@ -298,8 +298,8 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
         required_bytes = ceil(correlation_data.bit_length() / 8.0)
         properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big')
     
-    # == Method 0 ==
-    if method == GlobalDefs.PurposeManagementMethod.PM_0:
+    # == Method 1 ==
+    if method == GlobalDefs.PurposeManagementMethod.PM_1:
         
         # Need to send message to each purpose topic
         described_purposes = GlobalDefs.find_described_purposes(purpose)
@@ -317,8 +317,8 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
             result = client.publish(curr_topic, qos=qos, retain=retain, payload=payload, properties=properties)
             ret_list.append((result, curr_topic))
     
-    # == Method 1 ==
-    elif method == GlobalDefs.PurposeManagementMethod.PM_1:
+    # == Method 2 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_2:
         
         # Publish with required MP as a property
         properties.UserProperty = (GlobalDefs.PROPERTY_MP, purpose)
@@ -326,8 +326,8 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
         msg_info = client.publish(topic, payload, qos=qos, retain=retain, properties=properties)
         return [(msg_info, topic)]  # Return list of (message info, topic) tuples
     
-    # == Methods 2 and 3 == #
-    elif method == GlobalDefs.PurposeManagementMethod.PM_2 or method == GlobalDefs.PurposeManagementMethod.PM_3:
+    # == Methods 3 and 4 == #
+    elif method == GlobalDefs.PurposeManagementMethod.PM_3 or method == GlobalDefs.PurposeManagementMethod.PM_4:
         
         # This is just a normal publish
         msg_info = client.publish(topic, payload, qos=qos, retain=retain, properties=properties)
@@ -374,8 +374,8 @@ def _handle_operation_publish(client: mqtt.Client, method: GlobalDefs.PurposeMan
         
     ret_list = list()
     
-    # == Method 0 ==
-    if method == GlobalDefs.PurposeManagementMethod.PM_0:
+    # == Method 1 ==
+    if method == GlobalDefs.PurposeManagementMethod.PM_1:
         
         # Update properties
         properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
@@ -397,8 +397,8 @@ def _handle_operation_publish(client: mqtt.Client, method: GlobalDefs.PurposeMan
             result = client.publish(curr_topic, qos=qos, retain=retain, payload=payload, properties=properties)
             ret_list.append((result, curr_topic))
     
-    # == Method 1 ==
-    elif method == GlobalDefs.PurposeManagementMethod.PM_1:
+    # == Method 2 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_2:
         
         # Publish with required MP as a property
         properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
@@ -408,8 +408,8 @@ def _handle_operation_publish(client: mqtt.Client, method: GlobalDefs.PurposeMan
         msg_info = client.publish(topic, payload, qos=qos, retain=retain, properties=properties)
         return [(msg_info, topic)]  # Return list of (message info, topic) tuples
     
-    # == Methods 2 and 3 == #
-    elif method == GlobalDefs.PurposeManagementMethod.PM_2 or method == GlobalDefs.PurposeManagementMethod.PM_3:
+    # == Methods 3 and 4 == #
+    elif method == GlobalDefs.PurposeManagementMethod.PM_3 or method == GlobalDefs.PurposeManagementMethod.PM_4:
 
         properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
         properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")

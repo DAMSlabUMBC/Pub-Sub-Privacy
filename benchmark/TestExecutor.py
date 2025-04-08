@@ -442,6 +442,12 @@ class TestExecutor:
             for message_info, topic in results:
                 if not test_client.name in self.pending_publishes:
                     self.pending_publishes[test_client.name] = dict()
+                    
+                # For purpose management method 1, we need to extract the topic properly
+                if self.method == GlobalDefs.PurposeManagementMethod.PM_1:
+                    purpose_start_index = topic.rfind('[')
+                    topic = topic[:purpose_start_index - 1]
+                    
                 self.pending_publishes[test_client.name][message_info.mid] = (topic, test_client.publish_topics[topic], "DATA")
                 
                 # Save message counter for correlations

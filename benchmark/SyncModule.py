@@ -49,7 +49,7 @@ class BenchmarkSynchronizer:
             
             # Register subscriptions
             # For broker-unaware purpose filtering, no wildcards can be used
-            if method == GlobalDefs.PurposeManagementMethod.PM_0:
+            if method == GlobalDefs.PurposeManagementMethod.PM_1:
                 for benchmark in self.benchmark_ready_states.keys():
                     GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(self.client, method, self._on_message_recv, 
                                                             self.READY_TOPIC_PREFIX + benchmark, BenchmarkSynchronizer.SYNC_PURPOSE, qos=1, no_local=False)
