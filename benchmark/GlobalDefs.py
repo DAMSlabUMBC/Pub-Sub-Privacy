@@ -54,12 +54,12 @@ REG_BY_TOPIC_PUB_REG_TOPIC: str = ""
 REG_BY_TOPIC_SUB_REG_TOPIC: str= ""
 REG_BY_MSG_REG_TOPIC: str = ""
 
-PROPERTY_MP: str = "PF-MP"
-PROPERTY_SP: str = "PF-SP"
-PROPERTY_ID: str = "PF-ClientID"
-PROPERTY_CONSENT: str = "PF-Allow"
-PROPERTY_OPERATION: str = "PF-Operation"
-PROPERTY_OP_INFO: str = "PF-OpInfo"
+PROPERTY_MP: str = "DAP-MP"
+PROPERTY_SP: str = "DAP-SP"
+PROPERTY_ID: str = "DAP-ClientID"
+PROPERTY_CONSENT: str = "DAP-Allow"
+PROPERTY_OPERATION: str = "DAP-Operation"
+PROPERTY_OP_INFO: str = "DAP-OpInfo"
 
 # Operational topics
 OR_TOPIC: str = ""
