@@ -69,32 +69,18 @@ def run_topology():
 
     net.start()
     
-    print(per_msg.cmd("ip link show"))
-    print(per_msg.cmd("ip addr show"))
-    
-    # Force pm0 up in the per_msg container
+    # Force containers up
     non_mod.cmd("ip link set dev nm0 up")
     per_msg.cmd("ip link set dev pm0 up")
     reg_by_msg.cmd("ip link set dev rbm0 up")
     reg_by_topic.cmd("ip link set dev rbtp0 up")
     bench.cmd("ip link set dev b0 up")
 
-
-    # Now check again
-    print(non_mod.cmd("ip addr show pm0"))
-    print(per_msg.cmd("ip addr show pm0"))
-    print(reg_by_msg.cmd("ip addr show rbm0"))
-    print(reg_by_topic.cmd("ip addr show rbtp0"))
-
-
-
     # Retrieve the IP address of broker1
     non_mod_ip = non_mod.IP()
     per_msg_ip = per_msg.IP()
     reg_by_msg_ip = reg_by_msg.IP()
     reg_by_topic_ip = reg_by_topic.IP()
-
-    
 
     # Then run the benchmarks on whichever one you want
     command0 = f"python3 /benchmark/Benchmark.py run /benchmark/configs/examples/B0.cfg {non_mod_ip} --logfile /benchmark/logs/B0_run.log"
