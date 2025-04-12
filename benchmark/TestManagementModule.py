@@ -8,7 +8,7 @@ import GlobalDefs
 from SyncModule import BenchmarkSynchronizer
 from ConfigParsingModule import ConfigParser
 from LoggingModule import ResultLogger
-from TestExecutor import TestExecutor, TestConfiguration
+from TestExecutor import TestExecutor
 
 def configure_and_run_tests(config: str, broker_address: str, broker_port: int, log_file: str | None):
 
@@ -59,10 +59,12 @@ def configure_and_run_tests(config: str, broker_address: str, broker_port: int, 
     except Exception as e:
         print(f"Unable to initialize the logging module - {e}")
         sys.exit(GlobalDefs.ExitCode.FAILED_TO_INIT_LOGGING)
+        
+    GlobalDefs.LOGGING_MODULE.log_pm_method(benchmark_config.method.value)
     
     # Set up test framework and run each test
     # NOTE: Only one test can be run per execution at the moment. Future plans include allowing multiple tests in one configuration file
-    executor = TestExecutor(benchmark_config.this_node_name, broker_address, broker_port, benchmark_config.method)
+    executor = TestExecutor(benchmark_config.this_node_name, broker_address, broker_port, benchmark_config.method, benchmark_config.seed)
     for test in benchmark_config.test_list:
        
         executor.setup_test(test)

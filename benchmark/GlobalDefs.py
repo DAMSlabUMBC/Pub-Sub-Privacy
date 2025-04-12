@@ -41,7 +41,10 @@ class ExitCode(IntEnum):
     BAD_CLIENT_API = 3
     FAILED_TO_INIT_SYNC = 4
     FAILED_TO_INIT_LOGGING = 5
-    UNEXP_SYNC_CLIENT_DISCONNECT = 6
+    UNEXP_SYNC_CLIENT_DISCONNECT = 6,
+    MALFORMED_LOG_FILE = 7,
+    CONFLICTING_LOG_FILES = 8,
+    SIGINT_RECEIVED = 9,
     UNKNOWN_ERROR = 99
 
 # These should be assigned as created
@@ -104,3 +107,7 @@ def find_described_purposes(purpose_filter: str) -> list[str]:
             described_purposes.append(purpose)
 
     return described_purposes
+
+def purpose_described_by_filter(purpose: str, purpose_filter: str) -> bool:
+    purposes_described_by_filter = find_described_purposes(purpose_filter)
+    return (purpose in purposes_described_by_filter)

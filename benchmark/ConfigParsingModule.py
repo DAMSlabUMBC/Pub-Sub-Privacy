@@ -12,6 +12,7 @@ class BenchmarkConfiguration:
     method: PurposeManagementMethod
     client_module_name: str
     log_output_dir: str
+    seed: int | None = None
     
     # === Required topics for some PM methods ===
     reg_by_msg_reg_topic: str = ""
@@ -64,6 +65,10 @@ class ConfigParser:
         if not "output_dir" in data:
             raise Exception("output_dir not found in config")
         self.the_config.log_output_dir = data["output_dir"]
+        
+        # Optional
+        if "seed" in data:
+            self.the_config.seed = int(data["seed"])
         
         if not "purpose_management_method" in data:
             raise Exception("purpose_management_method not found in config")

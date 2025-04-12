@@ -6,6 +6,8 @@ from typing import Callable, Optional, Tuple, List
 from math import ceil
 import GlobalDefs
 
+SUBSCRIPTION_ID_COUNTER: int = 1
+
 """Initializes a Paho MQTTv5 client and returns it to the requester
 
 Parameters
@@ -54,17 +56,9 @@ Returns
 paho.mqtt.client.MQTTErrorCode
     The return code of the connect attempt
 """
-def connect_client(client: mqtt.Client, broker_address: str, port: int = 1883, 
-                  success_callback: Optional[Callable] = None, 
-                  failure_callback: Optional[Callable] = None, 
+def connect_client(client: mqtt.Client, broker_address: str, port: int = 1883,
                   clean_start: bool = True) -> mqtt.MQTTErrorCode:
         
-    # We don't need to do any additional processing before using the callbacks, so we can set those directly
-    if success_callback is not None:
-        client.on_connect = success_callback
-    if failure_callback is not None:
-        client.on_connect_fail = failure_callback
-
     # Attempt to send connect packet
     try:
         return client.connect(host=broker_address, port=port, clean_start=clean_start)
@@ -88,13 +82,8 @@ Returns
 paho.mqtt.client.MQTTErrorCode
     The return code of the disconnect attempt
 """
-def disconnect_client(client: mqtt.Client, callback: Optional[Callable] = None, 
-                      reason_code: ReasonCode | None = None) -> mqtt.MQTTErrorCode:
+def disconnect_client(client: mqtt.Client,reason_code: ReasonCode | None = None) -> mqtt.MQTTErrorCode:
         
-    # We don't need to do any additional processing before using the callbacks, so we can set those directly
-    if callback is not None:
-        client.on_disconnect = callback
-
     # Attempt to send connect packet
     try:
         return client.disconnect(reasoncode=reason_code)
@@ -127,15 +116,17 @@ tuple[paho.mqtt.client.MQTTErrorCode, int | None]
     A tuple containing the error code and (if successful) the granted quality of service for the subscription
 """
 def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, 
-                                  callback: Callable, topic_filter: str, purpose_filter: str, 
-                                  qos: int = 0, no_local=True) -> Tuple[mqtt.MQTTErrorCode, Optional[int]]:
+                                  topic_filter: str, purpose_filter: str, 
+                                  qos: int = 0, no_local=True) -> List[Tuple[mqtt.MQTTErrorCode, Optional[int], int]]:
+    
+    global SUBSCRIPTION_ID_COUNTER
     
     if purpose_filter == None:
         purpose_filter = GlobalDefs.ALL_PURPOSE_FILTER
         
     subscribe_options = SubscribeOptions(qos=qos, noLocal=no_local)
-        
-    client.on_message = callback  # Set the callback for incoming messages
+    
+    return_list: List[Tuple[mqtt.MQTTErrorCode, Optional[int], int]] = list()
         
     # == Method 1 ==
     if method == GlobalDefs.PurposeManagementMethod.PM_1:
@@ -153,11 +144,11 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
 
         # Subscribe to each topic
         for topic in topic_list:
+            properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
+            properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
             result, mid = client.subscribe(topic, options=subscribe_options)
-            if result is not mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
-                return result, mid
-            
-        return result, mid
+            return_list.append((result, mid, SUBSCRIPTION_ID_COUNTER))
+            SUBSCRIPTION_ID_COUNTER += 1
     
     # == Method 2 and 3 ==
     elif method == GlobalDefs.PurposeManagementMethod.PM_2 or method == GlobalDefs.PurposeManagementMethod.PM_3:
@@ -165,21 +156,30 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
         # Purpose filter is supplied on subscription
         properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
         properties.UserProperty = (GlobalDefs.PROPERTY_SP, purpose_filter)
+        properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
         
         try:
             result, mid = client.subscribe(topic_filter, properties=properties, options=subscribe_options)
-            return result, mid  # Return error code and message ID
+            return_list.append((result, mid, SUBSCRIPTION_ID_COUNTER))
         except Exception as e:
-            return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
+            return_list.append((mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None, SUBSCRIPTION_ID_COUNTER))
+
+        SUBSCRIPTION_ID_COUNTER += 1
+
 
     # == Method 4 ==
     elif method == GlobalDefs.PurposeManagementMethod.PM_4:
         
         # Perform a normal subscribe first
         try:
+            properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
+            properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
             result, mid = client.subscribe(topic_filter, options=subscribe_options)
-        except Exception:
-            return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
+            return_list.append((result, mid, SUBSCRIPTION_ID_COUNTER))
+        except Exception as e:
+            return_list.append((mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None, SUBSCRIPTION_ID_COUNTER))
+
+        SUBSCRIPTION_ID_COUNTER += 1
         
         # If it didn't fail, send registration for subscription purpose
         sp_reg_topic = f"{GlobalDefs.REG_BY_TOPIC_SUB_REG_TOPIC}/{topic_filter}[{purpose_filter}]"
@@ -193,17 +193,17 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
         
         client.publish(sp_reg_topic, qos=qos, properties=properties)
         
-        return result, mid  # Return error code and message ID
+    else:
+        # Not able to subscribe if method is invalid
+        return_list.append((mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None, -1))
         
-    # Not able to subscribe if method is invalid
-    return mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None
+    return return_list
 
 
-def subscribe_for_operations(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, 
-                                  callback: Callable, topic_filter: str) -> Tuple[mqtt.MQTTErrorCode, Optional[int]]:
+def subscribe_for_operations(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, topic_filter: str) -> List[Tuple[mqtt.MQTTErrorCode, Optional[int], int]]:
     
     # Call normal subcribe with QoS 2 and defined purpose
-    return subscribe_with_purpose_filter(client, method, callback, topic_filter, GlobalDefs.OP_PURPOSE, 2)
+    return subscribe_with_purpose_filter(client, method, topic_filter, GlobalDefs.OP_PURPOSE, 2)
 
 
 """Attempts to register a purpose filter for publications to a topic (Used only for PM_2 and PM_3)
@@ -296,7 +296,7 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
     
     if correlation_data is not None:
         required_bytes = ceil(correlation_data.bit_length() / 8.0)
-        properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big')
+        properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big', signed=False)
     
     # == Method 1 ==
     if method == GlobalDefs.PurposeManagementMethod.PM_1:
@@ -352,7 +352,7 @@ def publish_operation_request(client: mqtt.Client, method: GlobalDefs.PurposeMan
     
     if correlation_data is not None:
         required_bytes = ceil(correlation_data.bit_length() / 8.0)
-        properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big')
+        properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big', signed=False)
    
     if operation == "Informed":
         return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=2)

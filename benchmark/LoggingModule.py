@@ -5,16 +5,18 @@ from pathlib import Path
 from typing import TextIO
 from GlobalDefs import ExitCode
 
+SEED_LABEL: str = "SET_SEED"
+PM_METHOD_LABEL: str = "SET_PURPOSE_MANAGEMENT_METHOD"
+CONNECT_LABEL: str = "CONNECT"
+DISCONNECT_LABEL: str = "DISCONNECT"
+SUBSCRIBE_LABEL: str = "SUBSCRIBE"
+PUBLISH_LABEL: str = "PUBLISH"
+OP_PUBLISH_LABEL: str = "PUBLISH_OP"
+RECV_LABEL: str = "RECV"
+OP_RECV_LABEL: str = "RECV_OP"
+SEPARATOR: str = "@@"
+
 class ResultLogger:
-    
-    SEED_LABEL: str = "SET_SEED"
-    CONNECT_LABEL: str = "CONNECT"
-    DISCONNECT_LABEL: str = "DISCONNECT"
-    SUBSCRIBE_LABEL: str = "SUBSCRIBE"
-    PUBLISH_LABEL: str = "PUBLISH"
-    OP_PUBLISH_LABEL: str = "PUBLISH_OP"
-    RECV_LABEL: str = "RECV"
-    OP_RECV_LABEL: str = "RECV_OP"
 
     running: bool = False
     file_handle: TextIO | None = None
@@ -114,33 +116,37 @@ class ResultLogger:
     
     # TODO finalize these
     def log_seed(self, seed):
-        message = f"{self.SEED_LABEL}*{seed}"
+        message = f"{SEED_LABEL}{SEPARATOR}{seed}"
+        self.log_queue.put(message)
+        
+    def log_pm_method(self, pm_method):
+        message = f"{PM_METHOD_LABEL}{SEPARATOR}{pm_method}"
         self.log_queue.put(message)
     
     def log_connect(self, timestamp, benchmark_id, client_id):
-        message = f"{self.CONNECT_LABEL}*{timestamp}*{benchmark_id}*{client_id}"
+        message = f"{CONNECT_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}"
         self.log_queue.put(message)
         
     def log_disconnect(self, timestamp, benchmark_id, client_id):
-        message = f"{self.DISCONNECT_LABEL}*{timestamp}*{benchmark_id}*{client_id}"
+        message = f"{DISCONNECT_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}"
         self.log_queue.put(message)
 
-    def log_subscribe(self, timestamp, benchmark_id, client_id, topic_filter, purpose_filter):
-        message = f"{self.SUBSCRIBE_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_filter}*{purpose_filter}"
+    def log_subscribe(self, timestamp, benchmark_id, client_id, topic_filter, purpose_filter, sub_id):
+        message = f"{SUBSCRIBE_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_filter}{SEPARATOR}{purpose_filter}{SEPARATOR}{sub_id}"
         self.log_queue.put(message)
 
     def log_publish(self, timestamp, benchmark_id, client_id, corr_data, topic_name, purpose, msg_type):
-        message = f"{self.PUBLISH_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_name}*{purpose}*{msg_type}*{corr_data}"
+        message = f"{PUBLISH_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_name}{SEPARATOR}{purpose}{SEPARATOR}{msg_type}{SEPARATOR}{corr_data}"
         self.log_queue.put(message)
         
     def log_operation_publish(self, timestamp, benchmark_id, client_id, corr_data, topic_name, purpose, msg_type):
-        message = f"{self.OP_PUBLISH_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_name}*{purpose}*{msg_type}*{corr_data}"
+        message = f"{OP_PUBLISH_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_name}{SEPARATOR}{purpose}{SEPARATOR}{msg_type}{SEPARATOR}{corr_data}"
         self.log_queue.put(message)
         
-    def log_recv(self, timestamp, benchmark_id, client_id, corr_data, topic_name, msg_type):
-        message = f"{self.RECV_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_name}*{msg_type}*{corr_data}"
+    def log_recv(self, timestamp, benchmark_id, recv_client_id, sending_client_id, corr_data, topic_name, msg_type, sub_id):
+        message = f"{RECV_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{recv_client_id}{SEPARATOR}{sending_client_id}{SEPARATOR}{topic_name}{SEPARATOR}{sub_id}{SEPARATOR}{msg_type}{SEPARATOR}{corr_data}"
         self.log_queue.put(message)
         
-    def log_operation_recv(self, timestamp, benchmark_id, client_id, corr_data, topic_name, msg_type):
-        message = f"{self.OP_RECV_LABEL}*{timestamp}*{benchmark_id}*{client_id}*{topic_name}*{msg_type}*{corr_data}"
+    def log_operation_recv(self, timestamp, benchmark_id, recv_client_id, sending_client_id, corr_data, topic_name, msg_type, sub_id):
+        message = f"{OP_RECV_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{recv_client_id}{SEPARATOR}{sending_client_id}{SEPARATOR}{topic_name}{SEPARATOR}{sub_id}{SEPARATOR}{msg_type}{SEPARATOR}{corr_data}"
         self.log_queue.put(message)
