@@ -41,6 +41,7 @@ class PublishEvent:
     topic: str
     purpose: str
     message_type: str
+    op_category: str
     correlation_id: int
 
 @dataclass(frozen=True)
@@ -50,6 +51,8 @@ class RecvMessageEvent:
     timestamp: float
     topic: str
     message_type: str
+    op_category: str
+    op_status: str
     correlation_id: int
     sub_id: int
 
@@ -72,7 +75,7 @@ class ClientLatencyResults:
         self.recv_message_count += 1
     
     def get_average_latency_for_client(self) -> float:
-        return (self.total_latency / self.recv_message_count)
+        return 0 if (self.recv_message_count == 0) else (self.total_latency / self.recv_message_count)
 
        
 class TestLatencyResults:
@@ -101,7 +104,7 @@ class TestLatencyResults:
         for client in self.latency_by_client:
             client_latency_result = self.latency_by_client[client]
             total_latency = total_latency + client_latency_result.get_average_latency_for_client()
-        return (total_latency / self.get_client_count())
+        return 0 if (self.get_client_count() == 0) else (total_latency / self.get_client_count())
     
     
 class ClientThroughputResults:
@@ -143,7 +146,7 @@ class TestThroughputResults:
         for client in self.throughput_by_client:
             client_throuhgput_result = self.throughput_by_client[client]
             total_throughput = total_throughput + client_throuhgput_result.get_average_throughput_per_second_for_client()
-        return (total_throughput / self.get_client_count())    
+        return 0 if (self.get_client_count() == 0) else (total_throughput / self.get_client_count())    
    
     
 class ClientPBACCorrectnessResults:
@@ -184,13 +187,56 @@ class TestPBACCorrectnessResults:
         total_improperly_matched: int = 0
         total_not_matched: int = 0
         for client in self.pbac_correctness_by_client:
-            client_pbac_result:ClientPBACCorrectnessResults = self.pbac_correctness_by_client[client]
+            client_pbac_result = self.pbac_correctness_by_client[client]
             total_properly_matched += client_pbac_result.properly_matched
             total_improperly_matched += client_pbac_result.improperly_matched
             total_not_matched += client_pbac_result.not_matched
         total_messages = total_properly_matched + total_improperly_matched + total_not_matched  
         
         return total_properly_matched, total_improperly_matched, total_not_matched, total_messages
+   
+@dataclass(frozen=True)
+class OperationCoverageResults:
+    request: PublishEvent
+    responses_received: int
+    responses_expected: int
+    subscribers_contacted: int
+    subscribers_expected: int
+    
+class TestOperationCoverageResults:
+    correctness_by_request: Dict[PublishEvent, OperationCoverageResults]
+    triggered_msg_count_by_op: Dict[str, int]
+    non_correlated_msgs_recv_by_c2_c3_ops_count: int
+    
+    def __init__(self):
+        self.correctness_by_request = dict()
+        self.triggered_msg_count_by_op = dict()
+        self.non_correlated_msgs_recv_by_c2_c3_ops_count = 0
+    
+    def add_operation_coverage_result(self, result: OperationCoverageResults): 
+        self.correctness_by_request[result.request] = result
+        
+    def add_triggered_message_count(self, op: str, triggered_count: int):
+        if op not in self.triggered_msg_count_by_op:
+            self.triggered_msg_count_by_op[op] = 0
+        self.triggered_msg_count_by_op[op] += triggered_count
+        
+    def add_non_correlated_msg_count(self, message_count: int):
+        self.non_correlated_msgs_recv_by_c2_c3_ops_count += message_count
+        
+    def get_total_coverage(self) -> Tuple[int, int, int, int]: 
+        responses_received: int = 0
+        responses_expected: int = 0
+        subscribers_contacted: int = 0
+        subscribers_expected: int = 0
+        for request in self.correctness_by_request:
+            request_result:OperationCoverageResults = self.correctness_by_request[request]
+            responses_received += request_result.responses_received
+            responses_expected += request_result.responses_expected
+            subscribers_contacted += request_result.subscribers_contacted
+            subscribers_expected += request_result.subscribers_expected 
+        
+        return responses_received, responses_expected, subscribers_contacted, subscribers_expected
     
 
 class ResultsAnalyzer:
@@ -218,9 +264,15 @@ class ResultsAnalyzer:
     subs_regged_by_client: Dict[str, SortedDict[float, SubscribeEvent]]
     msgs_sent_by_client: Dict[str, SortedDict[float, List[PublishEvent]]]
     msgs_recv_by_client: Dict[str, SortedDict[float, List[RecvMessageEvent]]]
+    earliest_data_sent_by_client_map: Dict[str, Dict[str, float]]
     
     pub_to_subscriptions_mapping: Dict[PublishEvent, List[SubscribeEvent]]
     pub_to_recv_mapping: Dict[PublishEvent, List[RecvMessageEvent]]
+    
+    all_op_recv_msgs: List[RecvMessageEvent]
+    all_op_publish_msgs: List[PublishEvent]
+    op_req_to_responses_mapping: Dict[PublishEvent, List[RecvMessageEvent]]
+    triggered_op_recv: List[RecvMessageEvent]
     
     pub_event_count: int
     data_pub_event_count: int
@@ -230,6 +282,7 @@ class ResultsAnalyzer:
     test_latency: TestLatencyResults
     test_throughput: TestThroughputResults
     test_pbac_correctness: TestPBACCorrectnessResults
+    test_operation_coverage: TestOperationCoverageResults
     
     def __init__(self):
         self.purpose_management_method = None
@@ -247,9 +300,15 @@ class ResultsAnalyzer:
         self.subs_regged_by_client = dict()
         self.msgs_sent_by_client = dict()
         self.msgs_recv_by_client = dict()
+        self.earliest_data_sent_by_client_map = dict()
         
         self.pub_to_subscriptions_mapping = dict()
         self.pub_to_recv_mapping = dict()
+        
+        self.all_op_recv_msgs = list()
+        self.all_op_publish_msgs = list()
+        self.op_req_to_responses_mapping = dict()
+        self.triggered_op_recv = list()
         
         self.pub_event_count = 0
         self.data_pub_event_count = 0
@@ -259,6 +318,7 @@ class ResultsAnalyzer:
         self.test_latency = TestLatencyResults()
         self.test_throughput = TestThroughputResults()
         self.test_pbac_correctness = TestPBACCorrectnessResults()
+        self.test_operation_coverage = TestOperationCoverageResults()
         
     
     def parse_log_directory(self, log_directory):
@@ -427,7 +487,7 @@ class ResultsAnalyzer:
                             self.subs_regged_by_client[client_id][timestamp] = list()
                         self.subs_regged_by_client[client_id][timestamp].append(sub_event)
                     
-                    elif line_type == LoggingModule.PUBLISH_LABEL or line_type == LoggingModule.OP_PUBLISH_LABEL:
+                    elif line_type == LoggingModule.PUBLISH_LABEL:
                         
                         if parts_len != 8:
                             print(f"Improper format for line {line_index} found in file {log_file_path}. Aborting.")
@@ -440,7 +500,7 @@ class ResultsAnalyzer:
                         purpose = parts[5]
                         msg_type = parts[6]
                         corr_data = int(parts[7])
-                        pub_event = PublishEvent(client_id, timestamp, topic, purpose, msg_type, corr_data)
+                        pub_event = PublishEvent(client_id, timestamp, topic, purpose, msg_type, "NA", corr_data)
 
                         # Add the event
                         if timestamp not in self.all_publish_events:
@@ -456,12 +516,43 @@ class ResultsAnalyzer:
                         
                         # # Update metrics
                         self.pub_event_count += 1
-                        if line_type == LoggingModule.PUBLISH_LABEL:
-                            self.data_pub_event_count += 1
-                        elif line_type == LoggingModule.OP_PUBLISH_LABEL:
-                            self.op_pub_event_count += 1
+                        self.data_pub_event_count += 1
+                            
+                    elif line_type == LoggingModule.OP_PUBLISH_LABEL:
                         
-                    elif line_type == LoggingModule.RECV_LABEL or line_type == LoggingModule.OP_RECV_LABEL:
+                        if parts_len != 9:
+                            print(f"Improper format for line {line_index} found in file {log_file_path}. Aborting.")
+                            sys.exit(GlobalDefs.ExitCode.MALFORMED_LOG_FILE)
+                        
+                        # Create the event and add it to structures
+                        timestamp = float(parts[1])
+                        client_id = parts[3]
+                        topic = parts[4]
+                        purpose = parts[5]
+                        op_type = parts[6]
+                        op_category = parts[7]
+                        corr_data = int(parts[8])
+                        pub_event = PublishEvent(client_id, timestamp, topic, purpose, op_type, op_category, corr_data)
+
+                        # Add the event
+                        if timestamp not in self.all_publish_events:
+                            self.all_publish_events[timestamp] = list()
+                        self.all_publish_events[timestamp].append(pub_event)
+                        
+                        # Also add to messages sent by client
+                        if client_id not in self.msgs_sent_by_client:
+                            self.msgs_sent_by_client[client_id] = SortedDict()
+                        if timestamp not in self.msgs_sent_by_client[client_id]:
+                            self.msgs_sent_by_client[client_id][timestamp] = list()
+                        self.msgs_sent_by_client[client_id][timestamp].append(pub_event)
+                        
+                        self.all_op_publish_msgs.append(pub_event)
+                        
+                        # # Update metrics
+                        self.pub_event_count += 1
+                        self.op_pub_event_count += 1
+                        
+                    elif line_type == LoggingModule.RECV_LABEL:
                               
                         if parts_len != 9:
                             print(f"Improper format for line {line_index} found in file {log_file_path}. Aborting.")
@@ -474,8 +565,9 @@ class ResultsAnalyzer:
                         topic = parts[5]
                         sub_id = int(parts[6])
                         msg_type = parts[7]
-                        corr_data = int(parts[8])
-                        recv_event = RecvMessageEvent(recv_client_id, send_client_id, timestamp, topic, msg_type, corr_data, sub_id)
+                        corr_data = int(parts[8])    
+                        
+                        recv_event = RecvMessageEvent(recv_client_id, send_client_id, timestamp, topic, msg_type, "NA", "NA", corr_data, sub_id)
 
                         # Add the event
                         # TODO REMOVE
@@ -488,7 +580,41 @@ class ResultsAnalyzer:
                             self.msgs_recv_by_client[recv_client_id] = SortedDict()
                         if timestamp not in self.msgs_recv_by_client[recv_client_id]:
                             self.msgs_recv_by_client[recv_client_id][timestamp] = list()
-                        self.msgs_recv_by_client[recv_client_id][timestamp].append(recv_event)                
+                        self.msgs_recv_by_client[recv_client_id][timestamp].append(recv_event)
+                        
+                    elif line_type == LoggingModule.OP_RECV_LABEL:
+                              
+                        if parts_len != 11:
+                            print(f"Improper format for line {line_index} found in file {log_file_path}. Aborting.")
+                            sys.exit(GlobalDefs.ExitCode.MALFORMED_LOG_FILE)
+                        
+                        # Create the event and add it to structures
+                        timestamp = float(parts[1])
+                        recv_client_id = parts[3]
+                        send_client_id = parts[4]
+                        topic = parts[5]
+                        sub_id = int(parts[6])
+                        op_type = parts[7]
+                        op_category = parts[8]
+                        op_message_type = parts[9]
+                        corr_data = int(parts[10])    
+                        
+                        recv_event = RecvMessageEvent(recv_client_id, send_client_id, timestamp, topic, op_type, op_category, op_message_type, corr_data, sub_id)
+
+                        # Add the event
+                        # TODO REMOVE
+                        # if timestamp not in self.all_recv_events:
+                        #     self.all_recv_events[timestamp] = list()
+                        # self.all_recv_events[timestamp].append(recv_event)
+                        
+                        # Also add to messages received by client
+                        if recv_client_id not in self.msgs_recv_by_client:
+                            self.msgs_recv_by_client[recv_client_id] = SortedDict()
+                        if timestamp not in self.msgs_recv_by_client[recv_client_id]:
+                            self.msgs_recv_by_client[recv_client_id][timestamp] = list()
+                        self.msgs_recv_by_client[recv_client_id][timestamp].append(recv_event) 
+                        
+                        self.all_op_recv_msgs.append(recv_event)              
 
                 except Exception as e:
                     print(f"Improper format for line {line_index} found in file {log_file_path}. Aborting.")
@@ -501,7 +627,6 @@ class ResultsAnalyzer:
             correlation_task = self.correlation_progress.add_task("Correlating Messages", total=len(self.all_publish_events))
             for pub_timestamp in self.all_publish_events:
                 pub_events_at_time = self.all_publish_events[pub_timestamp]
-                pub_event: PublishEvent
                 for pub_event in pub_events_at_time:
                     
                     for recv_client in self.msgs_recv_by_client:            
@@ -532,9 +657,46 @@ class ResultsAnalyzer:
                         # Find all possible subscriptions from this client and correlate them
                         sub_events_for_client = self.subs_regged_by_client[recv_client]
                         possible_sub_events = {x: sub_events_for_client[x] for x in sub_events_for_client.keys() if x <= latest_sub_time and (earliest_sub_time == None or x >= earliest_sub_time)}
-                        self._correlate_pub_to_client_subs(pub_event, possible_sub_events)
+                        self._correlate_pub_to_client_subs(pub_event, possible_sub_events)    
                         
                 self.correlation_progress.update(correlation_task, advance=1)
+                
+        # Find the earliest time a client recieved messages from another client
+        self._correlate_earliest_data_transmissions()
+        
+        # Correlate operations
+        self._correlate_operations()
+      
+      
+    def _correlate_earliest_data_transmissions(self):
+      
+        # We only want to check messages we know we received
+        for recv_client in self.msgs_recv_by_client:
+            recv_by_this_client = self.msgs_recv_by_client[recv_client]
+            for timestamp in recv_by_this_client:
+                for recv_event in recv_by_this_client[timestamp]:
+                    
+                    # Verify this isn't an operational message, we only want data
+                    if recv_event.message_type != "DATA":
+                        continue
+                
+                    # Map the sending client to the recving client with a timestamp
+                    send_client = recv_event.sending_client_id
+                    if send_client not in self.earliest_data_sent_by_client_map:
+                        self.earliest_data_sent_by_client_map[send_client] = SortedDict()
+                    
+                    if recv_client not in self.earliest_data_sent_by_client_map[send_client]:
+                        self.earliest_data_sent_by_client_map[send_client][recv_client] = timestamp
+
+    
+    def _correlate_operations(self):
+        
+        for pub_event in self.all_op_publish_msgs:
+            recv_events_for_pub = [x for x in self.all_op_recv_msgs if x.correlation_id == pub_event.correlation_id and 
+                                   (x.sending_client_id == pub_event.client_id or (x.sending_client_id == "Broker" and x.recv_client_id == pub_event.client_id))]
+            self.op_req_to_responses_mapping[pub_event] = recv_events_for_pub
+            
+        self.triggered_op_recv = [x for x in self.all_op_recv_msgs if x.correlation_id == -1]
                         
                        
     def _correlate_pub_to_client_recv(self, pub_event: PublishEvent, recv_events_by_timestamp: SortedDict[float, List[RecvMessageEvent]]) -> None:
@@ -543,7 +705,6 @@ class ResultsAnalyzer:
         pub_sending_client = pub_event.client_id
         pub_corr_data = pub_event.correlation_id
         pub_message_type = pub_event.message_type
-        pub_topic = pub_event.topic
         
         for recv_event_list in recv_events_by_timestamp.values():
             for recv_event in recv_event_list:
@@ -552,10 +713,9 @@ class ResultsAnalyzer:
                 recv_sending_client = recv_event.sending_client_id
                 recv_corr_data = recv_event.correlation_id
                 recv_message_type = recv_event.message_type
-                recv_topic = recv_event.topic
                 
                 # Check for correlation
-                if pub_sending_client == recv_sending_client and pub_corr_data == recv_corr_data and pub_message_type == recv_message_type and pub_topic == recv_topic:
+                if pub_sending_client == recv_sending_client and pub_corr_data == recv_corr_data and pub_message_type == recv_message_type:
                                         
                     # Add to mapping
                     if pub_event not in self.pub_to_recv_mapping:
@@ -598,6 +758,15 @@ class ResultsAnalyzer:
                 
                 # Need to determine if topics are compatible (purposes will be checked for PBAC correctness)
                 topic_valid = paho_topic_matches_sub(sub_topic_filter, pub_topic)
+                
+                # Operations may have different topics
+                if not topic_valid and pub_topic == GlobalDefs.OSYS_TOPIC:
+                    
+                    # OSYS topics can link to any other purpose topic
+                    if (sub_topic_filter.startswith(GlobalDefs.ON_TOPIC) or sub_topic_filter.startswith(GlobalDefs.ONP_TOPIC) 
+                            or sub_topic_filter.startswith(GlobalDefs.OR_TOPIC) or sub_topic_filter.startswith(GlobalDefs.ORS_TOPIC)
+                            or sub_topic_filter.startswith(GlobalDefs.OP_RESPONSE_TOPIC)):
+                        topic_valid = True
 
                 # Check if the sub would've recv'ed this message
                 if topic_valid:
@@ -653,6 +822,9 @@ class ResultsAnalyzer:
         
         # For each message recieved, ensure the message should have been recieved according to purposes
         for pub_event in self.pub_to_recv_mapping:
+            
+            if pub_event.purpose == GlobalDefs.OP_PURPOSE:
+                continue
   
             all_clients_for_pub_event = set()
             
@@ -738,6 +910,86 @@ class ResultsAnalyzer:
                 # Save results
                 self.test_pbac_correctness.add_pbac_correctness_metrics(client, correctly_matched, improperly_matched_error, not_matched_error)
 
+    def calculate_operation_coverage(self):
+        
+        status_types = ["Success", "Failure", "Pending"]
+        
+        # For each operation sent, check which clients we received responses from
+        all_clients = list(self.all_client_statuses.keys())
+        for request in self.op_req_to_responses_mapping:
+            
+            # Different requirements for different categories
+            if request.op_category == "C1":
+
+                if self.purpose_management_method == GlobalDefs.PurposeManagementMethod.PM_0.value or self.purpose_management_method == GlobalDefs.PurposeManagementMethod.PM_1.value:
+                    
+                    # If we're not using broker assisted, we just need to make sure the subscribers received the message to check coverage
+                    # (We are not concerned with whether they respond, since operations may take a significant amount of time and may not finish in one benchmark)
+                    expected_response_count = 0
+                    responses = [x for x in self.op_req_to_responses_mapping[request] if x.sending_client_id != request.client_id and x.op_status in status_types]
+                    received_responses_count = len(responses)
+                    
+                    # We expect this to have been recieved by every subscriber
+                    recv_by_subscribers = [x for x in self.op_req_to_responses_mapping[request] if x.sending_client_id == request.client_id  and x.sending_client_id != request.client_id and x.op_status not in status_types]
+                    received_by_subscribers_count = len(responses)
+                    
+                    result = OperationCoverageResults(request, received_responses_count, expected_response_count, received_by_subscribers_count, expected_subscriber_recv_count)
+                    self.test_operation_coverage.add_operation_coverage_result(result)
+                    
+                else:
+                    
+                    expected_response_count = 0
+                    # If using broker assisted, we expect a response for every subscriber that has received data
+                    if request.client_id in self.earliest_data_sent_by_client_map:
+                        recv_clients_to_timestamps = self.earliest_data_sent_by_client_map[request.client_id]
+                        expected_responses = [x for x in recv_clients_to_timestamps.keys() if recv_clients_to_timestamps[x] <= request.timestamp]
+                        expected_response_count = len(expected_responses)
+                    
+                    # The responses come from the broker
+                    responses = [x for x in self.op_req_to_responses_mapping[request] if x.sending_client_id == "Broker" and x.op_status in status_types]
+                    received_responses_count = len(responses)
+                    
+                    # We do not expect subscribers to have recieved any messages in this case
+                    expected_subscriber_recv_count = 0
+                    recv_by_subscribers = [x for x in self.op_req_to_responses_mapping[request] if x.sending_client_id == request.client_id and x.op_status not in status_types]
+                    received_by_subscribers_count = len(recv_by_subscribers)
+                    
+                    result = OperationCoverageResults(request, received_responses_count, expected_response_count, received_by_subscribers_count, expected_subscriber_recv_count)
+                    self.test_operation_coverage.add_operation_coverage_result(result)
+            
+            # C2 and C3 results we check coverage
+            elif request.op_category == "C2" or request.op_category == "C3":
+            
+                # For C2 and C3 operations, we check how many subscribers recieved requests
+                if request.client_id in self.earliest_data_sent_by_client_map:
+                    recv_clients_to_timestamps = self.earliest_data_sent_by_client_map[request.client_id]
+                    expected_subscribers = [x for x in recv_clients_to_timestamps.keys() if recv_clients_to_timestamps[x] <= request.timestamp]
+                    expected_subscriber_recv_count = len(expected_subscribers)
+                    recv_by_subscribers = [x for x in self.op_req_to_responses_mapping[request] if x.sending_client_id == request.client_id and x.recv_client_id != request.client_id and x.op_status not in status_types]
+                    received_by_subscribers_count = len(recv_by_subscribers)
+                    
+                if self.purpose_management_method == GlobalDefs.PurposeManagementMethod.PM_0.value or self.purpose_management_method == GlobalDefs.PurposeManagementMethod.PM_1.value:
+                    # If we're not using broker assisted, we just need to make sure the subscribers received the message to check coverage
+                    # (We are not concerned with whether they respond, since operations may take a significant amount of time and may not finish in one benchmark)
+                    expected_response_count = 0
+                    responses = [x for x in self.op_req_to_responses_mapping[request] if x.sending_client_id != request.client_id and x.op_status in status_types]
+                    received_responses_count = len(responses)
+                else:
+                    # If using broker assisted, we expect one response from the broker
+                    expected_response_count = 1 
+                    responses = [x for x in self.op_req_to_responses_mapping[request] if x.sending_client_id == "Broker" and x.op_status in status_types]
+                    received_responses_count = len(responses)
+                    
+                result = OperationCoverageResults(request, received_responses_count, expected_response_count, received_by_subscribers_count, expected_subscriber_recv_count)
+                self.test_operation_coverage.add_operation_coverage_result(result)
+                
+        # Finally, we determine the messages sent by trigger
+        for recv_event in self.triggered_op_recv:
+            if recv_event.op_category == "C1" and recv_event.sending_client_id == "Broker":
+                self.test_operation_coverage.add_triggered_message_count(recv_event.message_type, 1)
+            else:
+                self.test_operation_coverage.add_non_correlated_msg_count(1)
+                
 
     def export_results(self, out_file: TextIOWrapper) -> None:
         
@@ -747,7 +999,7 @@ class ResultsAnalyzer:
         lines_to_write.append(f"Purpose Management Method: {self.purpose_management_method}")
         
         # We broker assisted operations are currently assumed when PM method > 1
-        if self.purpose_management_method == GlobalDefs.PurposeManagementMethod.PM_0 or self.purpose_management_method == GlobalDefs.PurposeManagementMethod.PM_1:
+        if self.purpose_management_method == GlobalDefs.PurposeManagementMethod.PM_0.value or self.purpose_management_method == GlobalDefs.PurposeManagementMethod.PM_1.value:
             lines_to_write.append(f"Broker Assisted Operations: Disabled")
         else:
             lines_to_write.append(f"Broker Assisted Operations: Enabled")
@@ -763,8 +1015,44 @@ class ResultsAnalyzer:
         lines_to_write.append(f"Total Published Messages: {self.pub_event_count}")
         lines_to_write.append(f"Data Message Publish Count: {self.data_pub_event_count}")
         lines_to_write.append(f"Operational Message Publish Count: {self.op_pub_event_count}")
+        
+        lines_to_write.append(f"----- Latency Statistics -----")
+        # Overall latency
+        latency = self.test_latency.get_average_latency()
+        client_count = self.test_latency.get_client_count()
+        msg_count = self.test_latency.get_message_count()
+        lines_to_write.append(f"Total average latency: {latency}s across {client_count} clients over {msg_count} received messages")
+        
+        # Per client latency
+        for client in self.test_latency.latency_by_client:
+            client_latency_results = self.test_latency.latency_by_client[client]
+            latency = client_latency_results.get_average_latency_for_client()
+            msg_count = client_latency_results.recv_message_count
+            lines_to_write.append(f"Average latency for Client {client}: {latency}s over {msg_count} received messages")
+        
+        lines_to_write.append(f"----- Throughput Statistics -----")
+        # Overall throughput
+        throughput = self.test_throughput.get_average_throughput_per_second()
+        client_count = self.test_throughput.get_client_count()
+        lines_to_write.append(f"Total average throughput: {throughput} msgs/s per client across {client_count} clients")
+        
+        # Per client throughput
+        for client in self.test_throughput.throughput_by_client:
+            client_throughput_results = self.test_throughput.throughput_by_client[client]
+            throughput = client_throughput_results.get_average_throughput_per_second_for_client()
+            interval_length = client_throughput_results.get_total_interval_length_seconds()
+            msg_count = client_throughput_results.get_total_messages()
+            lines_to_write.append(f"Average throughput for Client {client}: {throughput} msgs/s over {interval_length}s")
             
         lines_to_write.append(f"----- PBAC Correctness Statistics -----")
+        # Overall correctness
+        correct_count, improperly_matched_count, not_matched_count, total_messages = self.test_pbac_correctness.get_total_correctness()
+        pct_correct = 0.0
+        if total_messages != 0:
+            pct_correct = (float(correct_count) / float(total_messages))  * 100.0
+        client_count = self.test_pbac_correctness.get_client_count()
+        lines_to_write.append(f"Average PBAC Correctness: {pct_correct}% over {client_count} clients (Total Data Messages: {total_messages} - Correct: {correct_count} - Erroneously Allowed {improperly_matched_count} - Erroneously Rejected {not_matched_count})")
+        
         # Per client correctness
         for client in self.test_pbac_correctness.pbac_correctness_by_client:
             client_pbac_results: ClientPBACCorrectnessResults = self.test_pbac_correctness.pbac_correctness_by_client[client]
@@ -772,46 +1060,47 @@ class ResultsAnalyzer:
             improperly_matched_count = client_pbac_results.improperly_matched
             not_matched_count = client_pbac_results.not_matched
             total_messages = client_pbac_results.get_total_messages()
-            pct_correct = (float(correct_count) / float(total_messages)) * 100.0
+            pct_correct = 0.0
+            if total_messages != 0:
+                pct_correct = (float(correct_count) / float(total_messages)) * 100.0
 
-            lines_to_write.append(f"Average PBAC Correctness for Client {client}: {pct_correct}% (Total Messages: {total_messages} - Correct: {correct_count} - Erroneously Allowed {improperly_matched_count} - Erroneously Rejected {not_matched_count})")
-            
-        # Overall correctness
-        correct_count, improperly_matched_count, not_matched_count, total_messages = self.test_pbac_correctness.get_total_correctness()
-        pct_correct = (float(correct_count) / float(total_messages))  * 100.0
-        client_count = self.test_pbac_correctness.get_client_count()
-        lines_to_write.append(f"Average PBAC Correctness: {pct_correct}% over {client_count} clients (Total Messages: {total_messages} - Correct: {correct_count} - Erroneously Allowed {improperly_matched_count} - Erroneously Rejected {not_matched_count})")
+            lines_to_write.append(f"Average PBAC Correctness for Client {client}: {pct_correct}% (Total Data Messages: {total_messages} - Correct: {correct_count} - Erroneously Allowed {improperly_matched_count} - Erroneously Rejected {not_matched_count})")
         
-        lines_to_write.append(f"----- Operation Corectness Statistics -----")
-        # TODO Output stats
+        lines_to_write.append(f"----- Operation Coverage Statistics -----")     
+        # Overall coverage
+        responses_received, expected_responses, clients_reached, clients_expected = self.test_operation_coverage.get_total_coverage()
+        pct_responses = 100.0 # 0 needed is 100%
+        if expected_responses != 0:
+            pct_responses = (float(responses_received) / float(expected_responses)) * 100.0
+        pct_coverage = 100.0 # 0 needed is 100%
+        if clients_expected != 0:
+            pct_coverage = (float(clients_reached) / float(clients_expected)) * 100.0
+        lines_to_write.append(f"Overall coverage: {clients_reached} of {clients_expected} clients reached ({pct_coverage}%) and {responses_received} of {expected_responses} status messages received ({pct_responses}%)")
         
-        lines_to_write.append(f"----- Latency Statistics -----")
-        # Per client latency
-        for client in self.test_latency.latency_by_client:
-            client_latency_results = self.test_latency.latency_by_client[client]
-            latency = client_latency_results.get_average_latency_for_client()
-            msg_count = client_latency_results.recv_message_count
-            lines_to_write.append(f"Average latency for Client {client}: {latency}s over {msg_count} received messages")
-            
-        # Overall latency
-        latency = self.test_latency.get_average_latency()
-        client_count = self.test_latency.get_client_count()
-        msg_count = self.test_latency.get_message_count()
-        lines_to_write.append(f"Total average latency: {latency}s across {client_count} clients over {msg_count} received messages")
+        # Now do triggered operations
+        for op in self.test_operation_coverage.triggered_msg_count_by_op:
+            count = self.test_operation_coverage.triggered_msg_count_by_op[op]
+            lines_to_write.append(f"Triggered messages for Operation {op}: {count}")
         
-        lines_to_write.append(f"----- Throughput Statistics -----")
-        # Per client throughput
-        for client in self.test_throughput.throughput_by_client:
-            client_throughput_results = self.test_throughput.throughput_by_client[client]
-            throughput = client_throughput_results.get_average_throughput_per_second_for_client()
-            interval_length = client_throughput_results.get_total_interval_length_seconds()
-            msg_count = client_throughput_results.get_total_messages()
-            lines_to_write.append(f"Average throughput for Client {client}: {throughput} msgs/s over {interval_length}s and {msg_count} received messages")
+        # Now do triggered operations
+        if self.test_operation_coverage.non_correlated_msgs_recv_by_c2_c3_ops_count != 0:
+            lines_to_write.append(f"Erroneously recieved operation messages: {self.test_operation_coverage.non_correlated_msgs_recv_by_c2_c3_ops_count}")
+        
+        # Per request
+        for request in self.test_operation_coverage.correctness_by_request:
+            op_coverage_results = self.test_operation_coverage.correctness_by_request[request]
+            clients_reached = op_coverage_results.subscribers_contacted
+            responses_received = op_coverage_results.responses_received
+            expected_responses = op_coverage_results.responses_expected
+            clients_expected = op_coverage_results.subscribers_expected
+            pct_coverage = 100.0 # 0 needed is 100%
+            if clients_expected != 0:
+                pct_coverage = (float(clients_reached) / float(clients_expected)) * 100.0
+            pct_responses = 100.0 # 0 needed is 100%
+            if expected_responses != 0:
+                pct_responses = (float(responses_received) / float(expected_responses)) * 100.0
             
-        # Overall throughput
-        throughput = self.test_throughput.get_average_throughput_per_second()
-        client_count = self.test_throughput.get_client_count()
-        lines_to_write.append(f"Total average throughput: {throughput} msgs/s per client across {client_count} clients")
+            lines_to_write.append(f"{request.message_type} from {request.client_id} - ID {request.correlation_id}: reached {clients_reached} of {clients_expected} total ({pct_coverage}%) and received {responses_received} status messages out of an expected {expected_responses} ({pct_responses}%)")
         
         # Write with newlines
         out_file.writelines(f"{line}\n" for line in lines_to_write)
@@ -850,24 +1139,7 @@ def analyze_results(log_dir: str, out_file_path: Optional[str] = None) -> None:
     analyzer.calculate_latency()
     analyzer.calculate_throughput()
     analyzer.calculate_pbac_correctness()
-    #analyzer.calculate_operation_correctness()
+    analyzer.calculate_operation_coverage()
     
     # Print results
     analyzer.export_results(out_file)
-    
-
-    # metrics = analyzer.calculate_metrics()
-
-    # with open(out_file, 'w') as f:
-    #     f.write(f"Analysis completed on {time.ctime()}\n")
-    #     f.write(f"Log files processed: {len(log_files)}\n")
-    #     f.write(f"Total clients: {metrics['total_clients']}\n")
-    #     f.write(f"Online clients: {metrics['online_clients']}\n")
-    #     f.write(f"Total online time: {metrics['total_online_time']:.2f} seconds\n")
-    #     f.write(f"SubscribeEvents: {metrics['total_SubscribeEvents']}\n")
-    #     f.write(f"PublishEvents: {metrics['total_PublishEvents']}\n")
-    #     f.write(f"Received messages: {metrics['total_received']}\n")
-    #     f.write("Average latency: Not available (message IDs pending)\n")
-
-    # print(f"Results written to {out_file}")
-

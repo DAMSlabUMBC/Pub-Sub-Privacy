@@ -61,7 +61,7 @@ class TestConfiguration:
     # === Operation information ===
     op_send_chance: float = 0.0
     c1_reg_operations: List[str] = list()
-    possible_operations: List[str] = list()
+    possible_operations: Dict[str, str] = dict()
     
     def __init__(self, name:str, test_duration_ms: int, client_count: int):
         self.name = name
@@ -133,14 +133,7 @@ class TestExecutor:
         
         # Configure scheduler
         self.duration_scheduler = sched.scheduler()
-
-        # Setup signal handler
-        signal.signal(signal.SIGINT, self._signal_handler)
-    
-    
-    def _signal_handler(self, sig, frame):
-        self.stop_event.set() 
-        os.kill(os.getpid(), signal.SIGTERM)
+        
 
     def setup_test(self, test_config: TestConfiguration):
         
@@ -474,8 +467,8 @@ class TestExecutor:
             # Check if we should also do an operational publish
             if(random.random() < self.current_config.op_send_chance):
                 self._publish_operation(test_client)
-            
-            self._publish_data(test_client)
+            else:
+                self._publish_data(test_client)
              
                     
     def _publish_operation(self, test_client: TestClient):
@@ -483,7 +476,7 @@ class TestExecutor:
         message_counter = test_client.get_send_counter()
         
         # Select an operation for this topic
-        operation = random.choice(self.current_config.possible_operations)
+        operation = random.choice(list(self.current_config.possible_operations.keys()))
         
         # Lock this section to prevent a race condition with _on_publish
         self.publish_lock.acquire()
@@ -595,8 +588,8 @@ class TestExecutor:
         if userdata.name in self.pending_subscribes:
             if mid in self.pending_subscribes[userdata.name]: 
                     
-                # We only do one subscribe per packet so this is always len one
-                if reason_code_list[0] == 0:
+                # We only do one subscribe per packet so this is always len one and is success for QoS 0/1/2
+                if reason_code_list[0] == 0 or reason_code_list[0] == 1 or reason_code_list[0] == 2:
                     topic_filter, purpose_filter, sub_id, time = self.pending_subscribes[userdata.name][mid]
                     GlobalDefs.LOGGING_MODULE.log_subscribe(time, self.my_id, userdata.name, topic_filter, purpose_filter, sub_id)
         
@@ -622,15 +615,15 @@ class TestExecutor:
                     topic, purpose, op_type, time = self.pending_publishes[userdata.name][mid]
                     
                     # Do not log communications to the broker
-                    if not topic[0] == '$':
+                    # if not topic[0] == '$':
                     
-                        # Check if operational or data
-                        if op_type == "DATA":
-                            # Log message
-                            GlobalDefs.LOGGING_MODULE.log_publish(time, self.my_id, userdata.name, corr_data, topic, purpose, op_type)
-                        else:
-                            # Log message
-                            GlobalDefs.LOGGING_MODULE.log_operation_publish(time, self.my_id, userdata.name, corr_data, topic, purpose, op_type)
+                    # Check if operational or data
+                    if op_type == "DATA":
+                        # Log message
+                        GlobalDefs.LOGGING_MODULE.log_publish(time, self.my_id, userdata.name, corr_data, topic, purpose, op_type)
+                    else:
+                        # Log message
+                        GlobalDefs.LOGGING_MODULE.log_operation_publish(time, self.my_id, userdata.name, corr_data, topic, purpose, op_type, self.current_config.possible_operations[op_type])
                 
                 
     def _on_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):
@@ -638,6 +631,7 @@ class TestExecutor:
         operational_message = False
         operation_type = ""
         sending_client = "UNKNOWN"
+        op_message_type = "OP"
         correlation_data = -1
         sub_id: List[int] = list()
         
@@ -650,6 +644,8 @@ class TestExecutor:
                         operation_type = value
                     elif name == GlobalDefs.PROPERTY_ID:
                         sending_client = value
+                    elif name == GlobalDefs.PROPERTY_OP_STATUS:
+                        op_message_type = value
                         
             if hasattr(message.properties, "CorrelationData"):
                 correlation_data = int.from_bytes(message.properties.CorrelationData, byteorder='big', signed=False)
@@ -658,10 +654,9 @@ class TestExecutor:
                 sub_id = message.properties.SubscriptionIdentifier
             else:
                 sub_id.append(-1)
-        
+
         # Log messages
         if operational_message:
-            
-            GlobalDefs.LOGGING_MODULE.log_operation_recv(time.time(), self.my_id, userdata.name, sending_client, correlation_data, message.topic, operation_type, sub_id[0])
+            GlobalDefs.LOGGING_MODULE.log_operation_recv(time.time(), self.my_id, userdata.name, sending_client, correlation_data, message.topic, operation_type, self.current_config.possible_operations[operation_type], op_message_type, sub_id[0])
         else:
             GlobalDefs.LOGGING_MODULE.log_recv(time.time(), self.my_id, userdata.name, sending_client, correlation_data, message.topic, "DATA", sub_id[0])

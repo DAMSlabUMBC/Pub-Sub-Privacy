@@ -139,14 +139,14 @@ class ResultLogger:
         message = f"{PUBLISH_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_name}{SEPARATOR}{purpose}{SEPARATOR}{msg_type}{SEPARATOR}{corr_data}"
         self.log_queue.put(message)
         
-    def log_operation_publish(self, timestamp, benchmark_id, client_id, corr_data, topic_name, purpose, msg_type):
-        message = f"{OP_PUBLISH_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_name}{SEPARATOR}{purpose}{SEPARATOR}{msg_type}{SEPARATOR}{corr_data}"
+    def log_operation_publish(self, timestamp, benchmark_id, client_id, corr_data, topic_name, purpose, op_type, op_category):
+        message = f"{OP_PUBLISH_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_name}{SEPARATOR}{purpose}{SEPARATOR}{op_type}{SEPARATOR}{op_category}{SEPARATOR}{corr_data}"
         self.log_queue.put(message)
         
     def log_recv(self, timestamp, benchmark_id, recv_client_id, sending_client_id, corr_data, topic_name, msg_type, sub_id):
         message = f"{RECV_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{recv_client_id}{SEPARATOR}{sending_client_id}{SEPARATOR}{topic_name}{SEPARATOR}{sub_id}{SEPARATOR}{msg_type}{SEPARATOR}{corr_data}"
         self.log_queue.put(message)
         
-    def log_operation_recv(self, timestamp, benchmark_id, recv_client_id, sending_client_id, corr_data, topic_name, msg_type, sub_id):
-        message = f"{OP_RECV_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{recv_client_id}{SEPARATOR}{sending_client_id}{SEPARATOR}{topic_name}{SEPARATOR}{sub_id}{SEPARATOR}{msg_type}{SEPARATOR}{corr_data}"
+    def log_operation_recv(self, timestamp, benchmark_id, recv_client_id, sending_client_id, corr_data, topic_name, op_type, op_category, op_status, sub_id):
+        message = f"{OP_RECV_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{recv_client_id}{SEPARATOR}{sending_client_id}{SEPARATOR}{topic_name}{SEPARATOR}{sub_id}{SEPARATOR}{op_type}{SEPARATOR}{op_category}{SEPARATOR}{op_status}{SEPARATOR}{corr_data}"
         self.log_queue.put(message)

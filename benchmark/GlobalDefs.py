@@ -63,15 +63,16 @@ PROPERTY_ID: str = "DAP-ClientID"
 PROPERTY_CONSENT: str = "DAP-Allow"
 PROPERTY_OPERATION: str = "DAP-Operation"
 PROPERTY_OP_INFO: str = "DAP-OpInfo"
+PROPERTY_OP_STATUS: str = "DAP-Status"
 
 # Operational topics
-OR_TOPIC: str = ""
-ORS_TOPIC: str = ""
-ON_TOPIC: str = ""
-ONP_TOPIC: str = ""
-OSYS_TOPIC: str = ""
-OP_RESPONSE_TOPIC: str = ""
-OP_PURPOSE: str = ""
+OR_TOPIC: str = "OR"
+ORS_TOPIC: str = "ORS"
+ON_TOPIC: str = "ON"
+ONP_TOPIC: str = "ONP"
+OSYS_TOPIC: str = "$OSYS"
+OP_RESPONSE_TOPIC: str = "op_resp"
+OP_PURPOSE: str = "DAP_op"
 
 # Required functions for the client
 CLIENT_FUNCTIONS: List[str] = [  

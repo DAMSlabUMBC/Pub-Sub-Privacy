@@ -226,9 +226,17 @@ class ConfigParser:
             for op in test["c1_reg_ops"]:
                 test_config.c1_reg_operations.append(op)
             
-        if "ops" in test:
-            for op in test["ops"]:
-                test_config.possible_operations.append(op)
+        if "c1_ops" in test:
+            for op in test["c1_ops"]:
+                test_config.possible_operations[op] = "C1"
+                
+        if "c2_ops" in test:
+            for op in test["c2_ops"]:
+                test_config.possible_operations[op] = "C2"
+                
+        if "c3_ops" in test:
+            for op in test["c3_ops"]:
+                test_config.possible_operations[op] = "C3"
         
         # Topic and Purpose generation checks
         if "generate_topics" in test and test["generate_topics"]:
