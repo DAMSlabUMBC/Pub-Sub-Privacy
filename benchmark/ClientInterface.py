@@ -127,9 +127,19 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
     subscribe_options = SubscribeOptions(qos=qos, noLocal=no_local)
     
     return_list: List[Tuple[mqtt.MQTTErrorCode, Optional[int], int]] = list()
+    
+    # == Method 0 (No method) ==
+    if method == GlobalDefs.PurposeManagementMethod.PM_0:
+        
+        # We directly subscribe without care for purposes
+        properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
+        properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
+        result, mid = client.subscribe(topic_filter, options=subscribe_options)
+        return_list.append((result, mid, SUBSCRIPTION_ID_COUNTER))
+        SUBSCRIPTION_ID_COUNTER += 1
         
     # == Method 1 ==
-    if method == GlobalDefs.PurposeManagementMethod.PM_1:
+    elif method == GlobalDefs.PurposeManagementMethod.PM_1:
         
         # Under method 1, purposes are encoded as topics
         described_purposes = GlobalDefs.find_described_purposes(purpose_filter)
@@ -298,8 +308,15 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
         required_bytes = ceil(correlation_data.bit_length() / 8.0)
         properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big', signed=False)
     
+    # == Method 0 (No method) ==
+    if method == GlobalDefs.PurposeManagementMethod.PM_0:
+        
+         # We directly publish without care for purposes
+        msg_info = client.publish(topic, qos=qos, retain=retain, payload=payload, properties=properties)
+        return [(msg_info, topic)]
+    
     # == Method 1 ==
-    if method == GlobalDefs.PurposeManagementMethod.PM_1:
+    elif method == GlobalDefs.PurposeManagementMethod.PM_1:
         
         # Need to send message to each purpose topic
         described_purposes = GlobalDefs.find_described_purposes(purpose)
@@ -316,6 +333,8 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
         for curr_topic in topic_list:
             result = client.publish(curr_topic, qos=qos, retain=retain, payload=payload, properties=properties)
             ret_list.append((result, curr_topic))
+            
+        return ret_list
     
     # == Method 2 ==
     elif method == GlobalDefs.PurposeManagementMethod.PM_2:
@@ -374,8 +393,19 @@ def _handle_operation_publish(client: mqtt.Client, method: GlobalDefs.PurposeMan
         
     ret_list = list()
     
+    # == Method 0 (No method) ==
+    if method == GlobalDefs.PurposeManagementMethod.PM_0:
+        
+        # Update properties
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
+        
+         # We directly publish without care for purposes
+        msg_info = client.publish(topic, qos=qos, retain=retain, payload=payload, properties=properties)
+        return [(msg_info, topic)]
+    
     # == Method 1 ==
-    if method == GlobalDefs.PurposeManagementMethod.PM_1:
+    elif method == GlobalDefs.PurposeManagementMethod.PM_1:
         
         # Update properties
         properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
@@ -396,6 +426,8 @@ def _handle_operation_publish(client: mqtt.Client, method: GlobalDefs.PurposeMan
         for curr_topic in topic_list:
             result = client.publish(curr_topic, qos=qos, retain=retain, payload=payload, properties=properties)
             ret_list.append((result, curr_topic))
+            
+        return ret_list
     
     # == Method 2 ==
     elif method == GlobalDefs.PurposeManagementMethod.PM_2:
