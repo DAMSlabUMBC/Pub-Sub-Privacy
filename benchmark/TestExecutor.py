@@ -5,6 +5,7 @@ import random
 import signal
 import time
 import os
+from math import ceil
 import threading
 import ischedule
 import sched
@@ -254,7 +255,7 @@ class TestExecutor:
     def _connect_initial_clients(self) -> None:
         
         # Connect the specified number of clients
-        init_connected_client_count = (int)(self.current_config.client_count * self.current_config.pct_connected_clients_on_init)
+        init_connected_client_count = ceil((self.current_config.client_count * self.current_config.pct_connected_clients_on_init))
         clients_to_connect = random.sample(self.all_clients, init_connected_client_count)
         
         for test_client in clients_to_connect:
@@ -263,7 +264,7 @@ class TestExecutor:
             if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
                 test_client.client.loop_start()
             else:
-                raise RuntimeError(f"Failed to connect client {test_client.name}")
+                raise RuntimeError(f"Failed to connect client {test_client.name} with code {result_code}")
    
     def _subscribe_client_for_operations(self, test_client: TestClient):
         
@@ -328,7 +329,7 @@ class TestExecutor:
         # If not, determine new topics and purpose to subscribe on
         else:
             # Determine the specified number of topics to connect to 
-            topics_for_subscription_count = (int)(len(self.current_config.subscribe_topic_list) * self.current_config.pct_topics_per_client)
+            topics_for_subscription_count = ceil((len(self.current_config.subscribe_topic_list) * self.current_config.pct_topics_per_client))
             topics_for_subscription = random.sample(self.current_config.subscribe_topic_list, topics_for_subscription_count)
             
             for topic in topics_for_subscription:
@@ -365,7 +366,7 @@ class TestExecutor:
         for test_client in self.all_clients:
             
             # Find the specified number of topics
-            topics_for_publication_count = (int)(len(self.current_config.publish_topic_list) * self.current_config.pct_topics_per_client)
+            topics_for_publication_count = ceil((len(self.current_config.publish_topic_list) * self.current_config.pct_topics_per_client))
             topics_for_publication = random.sample(self.current_config.publish_topic_list, topics_for_publication_count)
             
             for topic in topics_for_publication:
@@ -401,7 +402,7 @@ class TestExecutor:
         connected_clients = [client for client in self.all_clients if client.is_connected]
                 
         # Disconnect the specified number of clients
-        clients_to_disconnect_count = (int)(len(connected_clients) * self.current_config.pct_to_disconnect)
+        clients_to_disconnect_count = ceil((len(connected_clients) * self.current_config.pct_to_disconnect))
         clients_to_disconnect = random.sample(connected_clients, clients_to_disconnect_count)
                 
         for test_client in clients_to_disconnect:
@@ -428,7 +429,7 @@ class TestExecutor:
         disconnected_clients = [client for client in self.all_clients if not client.is_connected]
                 
         # Connect the specified number of clients
-        clients_to_reconnect_count = (int)(len(disconnected_clients) * self.current_config.pct_to_reconnect)
+        clients_to_reconnect_count = ceil((len(disconnected_clients) * self.current_config.pct_to_reconnect))
         clients_to_reconnect = random.sample(disconnected_clients, clients_to_reconnect_count)
                 
         for test_client in clients_to_reconnect:
@@ -438,7 +439,7 @@ class TestExecutor:
             if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
                 test_client.client.loop_start()
             else:
-                raise RuntimeError(f"Failed to connect client {test_client.name}")
+                raise RuntimeError(f"Failed to connect client {test_client.name} with code {result_code}")
             
     def _shuffle_publication_purposes(self) -> None:
         
@@ -459,7 +460,7 @@ class TestExecutor:
         connected_clients = [client for client in self.all_clients if client.is_connected]
         
         # Publish on specified number of clients
-        clients_to_publish_count = (int)(len(connected_clients) * self.current_config.pct_to_publish_on)
+        clients_to_publish_count = ceil((len(connected_clients) * self.current_config.pct_to_publish_on))
         clients_to_publish = random.sample(connected_clients, clients_to_publish_count)
         
         for test_client in clients_to_publish:
@@ -506,7 +507,7 @@ class TestExecutor:
     
     def _publish_data(self, test_client: TestClient):
         # Publish on specified number of topics
-        topics_to_publish_on_count = (int)(len(test_client.publish_topics) * self.current_config.pct_topics_per_pub)
+        topics_to_publish_on_count = ceil((len(test_client.publish_topics) * self.current_config.pct_topics_per_pub))
         topics_to_publish_on = random.sample(sorted(test_client.publish_topics.keys()), topics_to_publish_on_count)
         
         for topic in topics_to_publish_on:

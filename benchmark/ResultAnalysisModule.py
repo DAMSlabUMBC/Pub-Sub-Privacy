@@ -961,6 +961,8 @@ class ResultsAnalyzer:
             elif request.op_category == "C2" or request.op_category == "C3":
             
                 # For C2 and C3 operations, we check how many subscribers recieved requests
+                received_by_subscribers_count = 0
+                expected_subscriber_recv_count = 0
                 if request.client_id in self.earliest_data_sent_by_client_map:
                     recv_clients_to_timestamps = self.earliest_data_sent_by_client_map[request.client_id]
                     expected_subscribers = [x for x in recv_clients_to_timestamps.keys() if recv_clients_to_timestamps[x] <= request.timestamp]
