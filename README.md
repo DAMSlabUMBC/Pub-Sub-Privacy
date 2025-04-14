@@ -1,69 +1,138 @@
-# Pub-Sub-Privacy
+# MQTT-DAP Benchmark
 
-Built in GDPR compliance in a MQTT broker
+A benchmarking framework for **MQTT-DAP-Mosquitto-GDPR (MQTT Data Access and Processing)** , designed to evaluate broker preformance under realistic conditions.
 
-## Description
+---
 
-Pub-Sub-Privacy is a customized MQTT broker (Eclipse Mosquitto) that explores enabling GDPR compliance in MQTT through the use of plugins. In this project we extend the Mosquitto broker to handle GDPR rights in the context of how they can be applied in MQTT.
+## Table of Contents
 
-## Getting Started
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [Running the Benchmark](#running-the-benchmark)
+- [Client Interface](#client-interface)
+- [Metrics](#metrics)
+- [Configuration](#configuration)
+- [Dependencies](#dependencies)
+- [License](#license)
 
-### Dependencies
+---
 
-- **Docker**: Ensure you have Docker installed .
-- **Basic MQTT Knowledge**: Familiarity with MQTT protocol, MQTT brokers, and MQTT clients.
-- **Operating System**: Compatible with any OS that support Docker.
+## Overview
 
+This benchmark addresses testing MQTT-DAP-Mosquitto-GDPR by:
 
-### Installing
+- Supporting custom MQTT-DAP control packets
+- Simulating real-world IoT environments
+- Enabling testing of purpose-based access control mechanisms
+- Supporting operational requests across distributed clients with variable behaviors
 
-   1. **Clone the Repository**
+---
 
-      Clone the project repository to your local machine:
+## Key Features
 
-      ```
-      git clone https://github.com/DAMSlabUMBC/pub-sub-privacy.git
-      cd pub-sub-privacy/eclipse_mosquitto
-      ```
-   2. **Build the Custom Mosquitto Docker Image**
+- Support for client disconnection/reconnection patterns  
+- Variable payload sizes and publishing rates  
+- Testing for different purpose management approaches  
+- Evaluation of operational request coverage  
+- Distributed testing capabilities  
 
-      Build the Docker image with the custom plugins included. The Dockerfile is configured 
-      to compile the plugins and set up the broker.
+---
 
-      ```
-      docker build -t mosquitto-custom .   
-      ```
-### Executing program
-#### Run the GDPR-Compliant Mosquitto Broker
+## Architecture
 
-Start the Mosquitto broker with GDPR compliance built in
+The benchmark is composed of five components:
+
+1. **Management Module**  
+   Parses configuration files and controls the benchmark node lifecycle.
+
+2. **Synchronization Module**  
+   Coordinates test state across distributed benchmark nodes to ensure proper initialization and completion.
+
+3. **Test Execution Module**  
+   Runs test logic, manages clients, sends/receives messages, evaluates purposes, and invokes operations.
+
+4. **Result Logging Module**  
+   Asynchronously logs results during test execution.
+
+5. **Results Calculation Module**  
+   Aggregates data across nodes to compute performance metrics.
+
+---
+
+## Running the Benchmark
+
+```bash
+# Run the benchmark with a configuration file and broker IP address
+python3 benchmark/Benchmark.py run /configs/<conf_file> <broker_ip>
 ```
-docker run -d --name gdpr-mosquitto-broker -p 1883:1883 mosquitto-custom
-```
-#### Verify the broker is running
-```
-docker ps
-```
-You should see ``` gdpr-mosquitto-broker``` listed as a running docker container
-#### Connect to the Broker
-Use any MQTT client in any language to publish and subscibe to topic via ```(your server):1883 ```
-#### Sample GDPR Compliance
-Follow our examples in the ```Examples``` folder for GDPR rights appliable in MQTT
-## Help
+## Client Interface
 
-If you encounter issues, consider the following troubleshooting steps:
-* Check Docker Logs
-  View the docker logs to find any errors
-  ```
-  docker logs gdpr-mosquitto-broker
-  ```
-* Acess the container shell to find errors
-  ```
-  docker exec -it gdpr-mosquitto-broker /bin/bash
-  ```
-* Rebuild the image 
+To integrate a new MQTT-DAP client, implement the following functions as defined in `ClientInterface.py`:
 
-## Version History
+- `connect(client_id, broker_address, broker_port)`  
+  Connect the client to the specified MQTT broker.
 
-* 0.1
-    * Initial Release
+- `disconnect()`  
+  Disconnect the client from the MQTT broker.
+
+- `subscribe(topic, qos, purpose)`  
+  Subscribe to a topic with a specified QoS level and purpose metadata.
+
+- `unsubscribe(topic)`  
+  Unsubscribe from a given topic.
+
+- `publish(topic, payload, qos, purpose)`  
+  Publish a message to a topic with an associated QoS level and purpose.
+
+- `define_purpose(purpose_id, purpose_properties)`  
+  Define a purpose with specific properties for access control.
+
+- `invoke_operation(operation, targets, arguments)`  
+  Invoke a distributed operation across client targets.
+
+- `receive_callback(callback_function)`  
+  Set a callback to handle incoming messages during test execution.
+
+---
+
+## Metrics
+
+The benchmark measures the following performance and correctness indicators:
+
+- **Message Latency**  
+  The time elapsed between message publication and receipt.
+
+- **Message Throughput**  
+  The number of messages received per second.
+
+- **PBAC Correctness**  
+  The accuracy of Purpose-Based Access Control filtering.
+
+- **Operational Coverage**  
+  The success rate of completed operational requests.
+
+---
+
+## Dependencies
+
+The MQTT-DAP Benchmark requires the following Python packages:
+
+- `ischedule==1.2.7`  
+- `markdown-it-py==3.0.0`  
+- `mdurl==0.1.2`  
+- `paho-mqtt==2.1.0`  
+- `Pygments==2.19.1`  
+- `PyYAML==6.0.2`  
+- `rich==14.0.0`  
+- `sortedcontainers==2.4.0`  
+
+You can install all dependencies using `pip`:
+
+```bash
+pip install -r benchmark/requirements.txt
+```
+## License
+
+This project is licensed under the **GNU General Public License v3.0**.  
+See the [LICENSE](./LICENSE) file for details.
