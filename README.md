@@ -1,4 +1,4 @@
-# MQTT-DAP Benchmark
+# MQTT-DAP-Benchmark
 
 A benchmarking framework for **MQTT-DAP-Mosquitto-GDPR (MQTT Data Access and Processing)** , designed to evaluate broker preformance under realistic conditions.
 
