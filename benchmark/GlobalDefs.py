@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, List  # Import List for compatibility
 
 # These provide type checking without cyclic imports
 if TYPE_CHECKING:
-    from SyncModule import BenchmarkSynchronizer
     from LoggingModule import ResultLogger
 
 # Framework Method Enums
@@ -35,21 +34,18 @@ ALL_PURPOSE_FILTER: str = "*"
 
 # Exit Code definitions
 class ExitCode(IntEnum):
-    SUCCESS = 0
-    BAD_ARGUMENT = 1
-    MALFORMED_CONFIG = 2
-    BAD_CLIENT_API = 3
-    FAILED_TO_INIT_SYNC = 4
-    FAILED_TO_INIT_LOGGING = 5
-    UNEXP_SYNC_CLIENT_DISCONNECT = 6,
-    MALFORMED_LOG_FILE = 7,
-    CONFLICTING_LOG_FILES = 8,
-    SIGINT_RECEIVED = 9,
+    SUCCESS = 0,
+    BAD_ARGUMENT = 1,
+    MALFORMED_CONFIG = 2,
+    BAD_CLIENT_API = 3,
+    FAILED_TO_INIT_LOGGING = 4,
+    MALFORMED_LOG_FILE = 5,
+    CONFLICTING_LOG_FILES = 6,
+    SIGINT_RECEIVED = 7,
     UNKNOWN_ERROR = 99
 
 # These should be assigned as created
 CLIENT_MODULE: ModuleType
-SYNC_MODULE: 'BenchmarkSynchronizer'
 LOGGING_MODULE: 'ResultLogger'
 
 # These should be assigned to based on the config file

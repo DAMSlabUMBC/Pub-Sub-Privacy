@@ -2,7 +2,6 @@ import sys
 from os import path
 import argparse
 from GlobalDefs import *
-import ConfigGenModule
 import TestManagementModule
 import ResultAnalysisModule
 
@@ -11,14 +10,9 @@ def main():
     # Read Command Line
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(title='subcommands',
-                                       help="Specify whether to generate configuration files, run the benchmark, or process benchmark outputs")
+                                       help="Specify whether to run the benchmark or process benchmark outputs")
     subparsers.required = True
     subparsers.dest = "command"
-
-    split_config_parser = subparsers.add_parser("genconfig")
-    split_config_parser.add_argument("full_config", help="The path to the top level configuration file")
-    split_config_parser.add_argument("-n" "--node_count", dest="node_count", type=int, help="The number of nodes across which to split the configuration file (required if benchmark-ids are not defined in the config)")
-    split_config_parser.add_argument("-o", "--out_dir", dest="out_dir", default="./configs", help="The directory in which to store the configs (default: ./configs)")
 
     run_benchmark_parser = subparsers.add_parser("run")
     run_benchmark_parser.add_argument("config", help="The path to the node-specific configuration file")
@@ -37,9 +31,7 @@ def main():
         sys.exit(ExitCode.BAD_ARGUMENT)
 
     # Perform relevation operation
-    if args.command == "genconfig":
-        ConfigGenModule.split_config(args.full_config, args.node_count, args.out_dir)
-    elif args.command == "run":
+    if args.command == "run":
         TestManagementModule.configure_and_run_tests(args.config, args.broker_address, args.port, args.logfile)
     elif args.command == "analyze":
         ResultAnalysisModule.analyze_results(args.log_dir, args.outfile)
@@ -67,24 +59,7 @@ bool
 def _validate_arguments(args: argparse.Namespace) -> bool:
 
     # Check subcommand
-    if args.command == "genconfig":
-        
-        # Full configuration must exist
-        if not path.isfile(args.full_config):
-            print(f"Cannot find configuration file at {args.full_config}")
-            return False
-        
-        # Benchmark number must be positive
-        if args.node_count is not None and args.node_count <= 0:
-            print(f"Node count must be positive")
-            return False
-        
-        # Out dir must either not exist or be a directory
-        if not path.isdir(args.out_dir) and path.exists(args.out_dir):
-            print(f"{args.out_dir} exists and is not a directory")
-            return False
-
-    elif args.command == "run":
+    if args.command == "run":
 
         # Node configuration must exist
         if not path.isfile(args.config):
