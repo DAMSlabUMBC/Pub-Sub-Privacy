@@ -1,47 +1,61 @@
 import sys
-from os import path
 import argparse
-from GlobalDefs import *
-import TestManagementModule
-import ResultAnalysisModule
+from os import path
+
+sys.path.insert(0, path.dirname(path.abspath(__file__)))
+
+import GlobalDefs
+from DeterministicConfigParser import DeterministicConfigParser
+from DeterministicTestExecutor import DeterministicTestExecutor, DeterministicTestConfiguration
+from LoggingModule import ResultLogger
+import importlib
+import time
+
 
 def main():
+    # Parse arguments
+    parser = argparse.ArgumentParser(
+        description='Run deterministic pub/sub privacy benchmark tests'
+    )
 
-    # Read Command Line
-    parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(title='subcommands',
                                        help="Specify whether to run the benchmark or process benchmark outputs")
     subparsers.required = True
     subparsers.dest = "command"
 
     run_benchmark_parser = subparsers.add_parser("run")
-    run_benchmark_parser.add_argument("config", help="The path to the node-specific configuration file")
-    run_benchmark_parser.add_argument("broker_address", help="The IP or FQDN of the broker")
-    run_benchmark_parser.add_argument("-p", "--port", dest="port", default=1883, help="The port on which to connect (default: 1883)")
-    run_benchmark_parser.add_argument("-o", "--logfile", dest="logfile", help="The logfile in which to store the output (default: 'logs/<benchmark_id_from_cfg>_YYYY-MM-DD_HH-MM-SS.log')")
+    run_benchmark_parser.add_argument('config', help='Path to configuration file')
+    run_benchmark_parser.add_argument('broker_address', help='IP or FQDN of the broker')
+    run_benchmark_parser.add_argument('-p', '--port', type=int, default=1883,
+                       help='Broker port (default: 1883)')
+    run_benchmark_parser.add_argument('-o', '--logfile', help='Log file path (optional)')
 
     analyze_results_parser = subparsers.add_parser("analyze")
-    analyze_results_parser.add_argument("log_dir", help="The path to the directory holding the log files to analyze")
+    analyze_results_parser.add_argument("logfile", help="The path to log file to analyze")
     analyze_results_parser.add_argument("-o" "--outfile", dest="outfile", help="The file in which to store the results (default: 'BenchmarkResults_YYYY-MM-DD_HH-MM-SS.txt')")
 
     args = parser.parse_args()
 
     # Validate arguments
     if not _validate_arguments(args):
-        sys.exit(ExitCode.BAD_ARGUMENT)
+        sys.exit(GlobalDefs.ExitCode.BAD_ARGUMENT)
 
-    # Perform relevation operation
+    print("=" * 80)
+    print("MQTT-DAP Benchmark")
+    print("=" * 80)
+
+    # Perform relevant operations
     if args.command == "run":
-        TestManagementModule.configure_and_run_tests(args.config, args.broker_address, args.port, args.logfile)
+        run_tests(args.config, args.logfile, args.broker_address, args.port)
     elif args.command == "analyze":
-        ResultAnalysisModule.analyze_results(args.log_dir, args.outfile)
+        analyze_results(args.logfile, args.outfile)
     else:
         # We should never get here as the argument validation should handle 
         # existing on malformed arguments
-        sys.exit(ExitCode.UNKNOWN_ERROR)
+        sys.exit(GlobalDefs.ExitCode.UNKNOWN_ERROR)
 
     # If we completed, everything was okay
-    sys.exit(ExitCode.SUCCESS)
+    sys.exit(GlobalDefs.ExitCode.SUCCESS)   
 
 
 """Validates the basic format of the arguments. This function does not validate that files can be opened or that IP addresses can be reached.
@@ -60,7 +74,6 @@ def _validate_arguments(args: argparse.Namespace) -> bool:
 
     # Check subcommand
     if args.command == "run":
-
         # Node configuration must exist
         if not path.isfile(args.config):
             print(f"Cannot find configuration file at {args.config}")
@@ -73,24 +86,125 @@ def _validate_arguments(args: argparse.Namespace) -> bool:
             print(f"Port must be in the range [1-66535]")
             return False
         
-        # Logfile will be validated on open
-
     elif args.command == "analyze":
                 
         # Log directories must exist
-        if not path.isdir(args.log_dir):
-            print(f"Cannot find log file directory at {args.log_dir}")
+        if not path.isfile(args.logfile):
+            print(f"Cannot find log file at {args.logfile}")
             return False
 
         # Outfile will be validated on open
-
+        
     # Invalid subcommand
     else:
         return False
-    
+        
     # All passed
     return True
+    
+def run_tests(config, logfile, broker_address, port):
+    # Parse configuration
+    print(f"\nLoading configuration from: {config}")
+    config_parser = DeterministicConfigParser()
+    try:
+        benchmark_config = config_parser.parse_config(config)
+    except Exception as e:
+        print(f"Error: Failed to parse configuration: {e}")
+        sys.exit(GlobalDefs.ExitCode.MALFORMED_CONFIG)
 
+    # Set global configuration values
+    GlobalDefs.REG_BY_MSG_REG_TOPIC = benchmark_config.reg_by_msg_reg_topic
+    GlobalDefs.REG_BY_TOPIC_PUB_REG_TOPIC = benchmark_config.reg_by_topic_pub_reg_topic
+    GlobalDefs.REG_BY_TOPIC_SUB_REG_TOPIC = benchmark_config.reg_by_topic_sub_reg_topic
+    GlobalDefs.OR_TOPIC = benchmark_config.or_topic_name
+    GlobalDefs.ORS_TOPIC = benchmark_config.ors_topic_name
+    GlobalDefs.ON_TOPIC = benchmark_config.on_topic_name
+    GlobalDefs.ONP_TOPIC = benchmark_config.onp_topic_name
+    GlobalDefs.OSYS_TOPIC = benchmark_config.osys_topic__name
+    GlobalDefs.OP_RESPONSE_TOPIC = benchmark_config.op_response_topic
+    GlobalDefs.OP_PURPOSE = benchmark_config.op_purpose
+
+    # Load client interface module
+    module_name = benchmark_config.client_module_name
+    print(f"Loading client module: {module_name}")
+    try:
+        GlobalDefs.CLIENT_MODULE = _load_client_module(module_name)
+    except Exception as e:
+        print(f"Error: Failed to load client module: {e}")
+        sys.exit(GlobalDefs.ExitCode.BAD_CLIENT_API)
+
+    # Setup logging
+    if logfile is None:
+        timestring = time.strftime("%Y-%m-%d_%H-%M-%S")
+        logfile = f"{benchmark_config.log_output_dir}/{benchmark_config.this_node_name}_{timestring}.log"
+
+    print(f"Logging to: {logfile}")
+    GlobalDefs.LOGGING_MODULE = ResultLogger()
+    try:
+        GlobalDefs.LOGGING_MODULE.start(logfile)
+    except Exception as e:
+        print(f"Error: Failed to initialize logging: {e}")
+        sys.exit(GlobalDefs.ExitCode.FAILED_TO_INIT_LOGGING)
+
+    GlobalDefs.LOGGING_MODULE.log_pm_method(benchmark_config.method.value)
+
+    # Create test executor
+    print(f"\nConnecting to broker: {broker_address}:{port}")
+    print(f"Using purpose management method: {benchmark_config.method.value}")
+
+    executor = DeterministicTestExecutor(
+        benchmark_config.this_node_name,
+        broker_address,
+        port,
+        benchmark_config.method,
+        benchmark_config.seed
+    )
+
+    # Run each test
+    for test_config in benchmark_config.test_list:
+        print("\n" + "=" * 80)
+
+        # Check if deterministic mode
+        if isinstance(test_config, DeterministicTestConfiguration) and test_config.use_deterministic_scheduling:
+            print(f"Running DETERMINISTIC test: {test_config.name}")
+            print("=" * 80)
+            executor.setup_deterministic_test(test_config)
+            executor.perform_deterministic_test(test_config)
+        else:
+            print(f"Running LEGACY test: {test_config.name}")
+            print("=" * 80)
+            executor.setup_test(test_config)
+            executor.perform_test(test_config)
+
+    # Shutdown
+    GlobalDefs.LOGGING_MODULE.shutdown()
+
+    print("\n" + "=" * 80)
+    print(f"All tests completed successfully!")
+    print(f"Results logged to: {logfile}")
+    print("=" * 80)
+
+def _load_client_module(module_name: str):
+    """Load and validate the client interface module"""
+    module = importlib.import_module(module_name)
+    for function in GlobalDefs.CLIENT_FUNCTIONS:
+        if not hasattr(module, function):
+            raise AttributeError(f"Could not find required function: {function}")
+    return module
+
+def analyze_results(logfile, outfile):
+    print(f"\nAnalyzing results from: {logfile}")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    try:
+        exit_code = main()
+        sys.exit(exit_code)
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user")
+        sys.exit(GlobalDefs.ExitCode.SIGINT_RECEIVED)
+    except Exception as e:
+        print(f"\n\nFatal error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(GlobalDefs.ExitCode.UNKNOWN_ERROR)

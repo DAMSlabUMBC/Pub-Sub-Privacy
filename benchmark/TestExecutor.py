@@ -2,9 +2,7 @@ import paho.mqtt.client as mqtt
 from paho.mqtt.reasoncodes import ReasonCode
 from paho.mqtt.properties import Properties
 import random
-import signal
 import time
-import os
 from math import ceil
 import threading
 import ischedule

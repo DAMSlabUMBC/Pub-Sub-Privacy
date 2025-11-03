@@ -8,7 +8,6 @@ from TestExecutor import TestConfiguration
 class BenchmarkConfiguration:
     
     this_node_name: str
-    all_benchmark_names: List[str] = list()
     method: PurposeManagementMethod
     client_module_name: str
     log_output_dir: str
@@ -101,12 +100,6 @@ class ConfigParser:
         else:
             raise Exception("unknown purpose_management_method found in config")
 
-        if not "all_benchmark_names" in data:
-            raise Exception("all_benchmark_names not found in config")
-        
-        for name in data["all_benchmark_names"]:
-            self.the_config.all_benchmark_names.append(name)
-            
          # Parse the opertional config
         if not "or_topic_name" in data:
             raise Exception("or_topic_name not found in config")
