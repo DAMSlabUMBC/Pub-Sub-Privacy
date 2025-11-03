@@ -26,27 +26,18 @@ class TestConfiguration:
     
     # Used to randomly disconnect/reconnect clients
     perform_connection_test: bool = False
+    disconnection_pct: float = 0.0
     
     # === Topic information ===   
     pct_topics_per_client: float = 1.0
     publish_topic_list: List[str] = list()
     subscribe_topic_list: List[str] = list()
     
-    # Used to randomly generate topics
-    generate_topics: bool = True
-    topic_count: int = 0
-    topic_filter_count: int = 0
-    
     # === Purpose information ===
     purpose_shuffle_period_ms: int = 0
-    purpose_shuffle_chance: float = 0.0
+    purpose_shuffle_pct: float = 0.0
     publish_purpose_list: List[str] = list()
     subscribe_purpose_list: List[str] = list()
-    
-    # Used to randomly generate purposes
-    generate_purposes: bool = True
-    purpose_count: int = 0
-    purpose_filter_count: int = 0
     
     # === Publication information ===   
     pct_to_publish_on: float = 1.0
@@ -168,7 +159,7 @@ class TestExecutor:
         ischedule.schedule(self._publish_from_clients, interval=(test_config.pub_period_ms / 1000.0))
 
         # Shuffle purpose task
-        if test_config.purpose_shuffle_period_ms > 0:
+        if test_config.purpose_shuffle_pct > 0:
             ischedule.schedule(self._shuffle_publication_purposes, interval=(test_config.purpose_shuffle_period_ms / 1000.0))
         
         # == Main test loop ==
@@ -190,7 +181,7 @@ class TestExecutor:
         # Set event to be triggered at the test duration end
         self.duration_scheduler.enterabs(end_time, 1, self._end_test)
         stop_thread = threading.Thread(target=self.duration_scheduler.run)
-        print(f"\tTest will run for {test_config.test_duration_ms / 1000.0} second(s)")
+        print(f"\tTest will run for {test_dur_secs} second(s)")
         stop_thread.start()
         
         # Start the threads
@@ -397,7 +388,7 @@ class TestExecutor:
         connected_clients = [client for client in self.all_clients if client.is_connected]
                 
         # Disconnect the specified number of clients
-        clients_to_disconnect_count = (int)(len(connected_clients) * 0.25)
+        clients_to_disconnect_count = (int)(len(connected_clients) * self.current_config.disconnection_pct)
         clients_to_disconnect = random.sample(connected_clients, clients_to_disconnect_count)
                 
         for test_client in clients_to_disconnect:
@@ -420,16 +411,17 @@ class TestExecutor:
             
     def _shuffle_publication_purposes(self) -> None:
         
-        # Shuffle the purposes for all publications
-        for test_client in self.all_clients:
-            
-            # Check if we should shuffle purposes
-            if(random.random() < self.current_config.purpose_shuffle_chance):      
-                    
-                # Select a new purpose for each topic
-                for topic in test_client.publish_topics:             
-                    purpose_for_publication = random.choice(self.current_config.publish_purpose_list)
-                    test_client.publish_topics[topic] = purpose_for_publication
+        # Shuffle the purposes for requested percent of clients
+        connected_clients = [client for client in self.all_clients if client.is_connected]
+        clients_to_shuffle_count = (int)(len(connected_clients) * self.current_config.purpose_shuffle_pct)
+        clients_to_shuffle = random.sample(connected_clients, clients_to_shuffle_count)
+
+        for test_client in clients_to_shuffle:
+
+            # Select a new purpose for each topic
+            for topic in test_client.publish_topics:             
+                purpose_for_publication = random.choice(self.current_config.publish_purpose_list)
+                test_client.publish_topics[topic] = purpose_for_publication
             
     
     def _publish_from_clients(self):

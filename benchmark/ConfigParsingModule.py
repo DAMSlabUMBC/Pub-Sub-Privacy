@@ -166,6 +166,11 @@ class ConfigParser:
         # Client information
         if "perform_connection_test" in test:
             test_config.perform_connection_test = test["perform_connection_test"]
+
+            if test_config.perform_connection_test:
+                if not "disconnection_pct" in test:
+                    raise Exception(f"disconnection_pct not found with perform_connection_test enabled for test {test_config.name} config")
+                test_config.disconnection_pct = test["disconnection_pct"]
         
         if not "topics_subbed_by_client_pct" in test:
             raise Exception(f"topics_subbed_by_client_pct not found for test {test_config.name} config")
@@ -187,9 +192,9 @@ class ConfigParser:
             raise Exception(f"purpose_shuffle_period_ms not found for test {test_config.name} config")
         test_config.purpose_shuffle_period_ms = test["purpose_shuffle_period_ms"]
         
-        if not "purpose_shuffle_chance" in test:
-            raise Exception(f"purpose_shuffle_chance not found for test {test_config.name} config")
-        test_config.purpose_shuffle_chance = test["purpose_shuffle_chance"]
+        if not "purpose_shuffle_pct" in test:
+            raise Exception(f"purpose_shuffle_pct not found for test {test_config.name} config")
+        test_config.purpose_shuffle_pct = test["purpose_shuffle_pct"]
         
         if not "min_payload_length_bytes" in test:
             raise Exception(f"min_payload_length_bytes not found for test {test_config.name} config")
@@ -220,37 +225,28 @@ class ConfigParser:
             for op in test["c3_ops"]:
                 test_config.possible_operations[op] = "C3"
         
-        # Topic and Purpose generation checks
-        if "generate_topics" in test and test["generate_topics"]:
-            raise NotImplementedError(f"Topic generation is not supported yet, please use topics instead of generate_topics")
-            
-        else:
-            if not "topics" in test:
-                raise Exception(f"generate_purposes or topics not found for test {test_config.name} config")
-            
-            for topic in test["topics"]:
-                test_config.publish_topic_list.append(topic)
-            
-            if not "topic_filters" in test:
-                raise Exception(f"topic_filters not found for test {test_config.name} config")
-            
-            for filter in test["topic_filters"]:
-                test_config.subscribe_topic_list.append(filter)
-                
-        if "generate_purposes" in test and test["generate_purposes"]:
-            raise NotImplementedError(f"Purpose generation is not supported yet, please use purposes and purpose_filters instead of generate_purposes")
-            
-        else:
-            if not "purposes" in test:
-                raise Exception(f"generate_purposes or purposes not found for test {test_config.name} config")
-            
-            for purpose in test["purposes"]:
-                test_config.publish_purpose_list.append(purpose)
-            
-            if not "purpose_filters" in test:
-                raise Exception(f"purpose_filters not found for test {test_config.name} config")
-            
-            for filter in test["purpose_filters"]:
-                test_config.subscribe_purpose_list.append(filter)
+        if not "topics" in test:
+            raise Exception(f"topics not found for test {test_config.name} config")
         
+        for topic in test["topics"]:
+            test_config.publish_topic_list.append(topic)
+        
+        if not "topic_filters" in test:
+            raise Exception(f"topic_filters not found for test {test_config.name} config")
+        
+        for filter in test["topic_filters"]:
+            test_config.subscribe_topic_list.append(filter)
+                
+        if not "purposes" in test:
+            raise Exception(f"purposes not found for test {test_config.name} config")
+        
+        for purpose in test["purposes"]:
+            test_config.publish_purpose_list.append(purpose)
+        
+        if not "purpose_filters" in test:
+            raise Exception(f"purpose_filters not found for test {test_config.name} config")
+        
+        for filter in test["purpose_filters"]:
+            test_config.subscribe_purpose_list.append(filter)
+    
         self.the_config.test_list.append(test_config)
