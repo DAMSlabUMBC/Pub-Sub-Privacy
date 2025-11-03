@@ -164,26 +164,8 @@ class ConfigParser:
         test_config.qos = test["data_qos"]
         
         # Client information
-
-        if not "initially_connected_clients_pct" in test:
-            raise Exception(f"initially_connected_clients_pct not found for test {test_config.name} config")
-        test_config.pct_connected_clients_on_init = test["initially_connected_clients_pct"]
-        
-        if not "disconnect_period_ms" in test:
-            raise Exception(f"disconnect_period_ms not found for test {test_config.name} config")
-        test_config.disconnect_period_ms = test["disconnect_period_ms"]
-        
-        if not "disconnect_pct" in test:
-            raise Exception(f"disconnect_pct not found for test {test_config.name} config")
-        test_config.pct_to_disconnect = test["disconnect_pct"]
-        
-        if not "reconnect_period_ms" in test:
-            raise Exception(f"reconnect_period_ms not found for test {test_config.name} config")
-        test_config.reconnect_period_ms = test["reconnect_period_ms"]
-        
-        if not "reconnect_pct" in test:
-            raise Exception(f"reconnect_pct not found for test {test_config.name} config")
-        test_config.pct_to_reconnect = test["reconnect_pct"]
+        if "perform_connection_test" in test:
+            test_config.perform_connection_test = test["perform_connection_test"]
         
         if not "topics_subbed_by_client_pct" in test:
             raise Exception(f"topics_subbed_by_client_pct not found for test {test_config.name} config")

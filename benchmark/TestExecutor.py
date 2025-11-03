@@ -23,13 +23,9 @@ class TestConfiguration:
     # === Client information ===
     client_count: int
     qos: int = 0
-    pct_connected_clients_on_init: float = 1.0
     
     # Used to randomly disconnect/reconnect clients
-    pct_to_disconnect: float = 0.0
-    disconnect_period_ms: int = 0
-    pct_to_reconnect: float = 0.0
-    reconnect_period_ms: int = 0
+    perform_connection_test: bool = False
     
     # === Topic information ===   
     pct_topics_per_client: float = 1.0
@@ -155,7 +151,7 @@ class TestExecutor:
         
         # Connect clients
         print(f"\tConnecting and configuring initial clients...")
-        self._connect_initial_clients()
+        self._connect_all_clients()
         
         # Give a moment to allow messages to travel
         time.sleep(1)
@@ -170,22 +166,23 @@ class TestExecutor:
         # == Setup scheduler tasks, timing is in seconds and needs to be divided by 1000 ==
         # Publish task
         ischedule.schedule(self._publish_from_clients, interval=(test_config.pub_period_ms / 1000.0))
-        
-        # Connect task
-        if test_config.reconnect_period_ms > 0:
-            ischedule.schedule(self._reconnect_clients, interval=(test_config.reconnect_period_ms / 1000.0))
-        
-        # Disconnect task
-        if test_config.disconnect_period_ms > 0:
-            ischedule.schedule(self._disconnect_clients, interval=(test_config.disconnect_period_ms / 1000.0))
-            
+
         # Shuffle purpose task
         if test_config.purpose_shuffle_period_ms > 0:
             ischedule.schedule(self._shuffle_publication_purposes, interval=(test_config.purpose_shuffle_period_ms / 1000.0))
         
         # == Main test loop ==
         # Calculate end time
-        end_time = time.monotonic() + (test_config.test_duration_ms / 1000.0) # Convert to seconds
+        start_time = time.monotonic()
+        test_dur_secs = test_config.test_duration_ms / 1000.0
+        end_time = start_time + test_dur_secs
+
+        # Disconnect testing tasks if enabled
+        if test_config.perform_connection_test:
+            disconnect_time = start_time + (test_dur_secs * (1/3))
+            reconnect_time = start_time + (test_dur_secs * (2/3))
+            self.duration_scheduler.enterabs(disconnect_time, 1, self._disconnect_clients)
+            self.duration_scheduler.enterabs(reconnect_time, 1, self._connect_all_clients)
                 
         # Start scheduler processing
         self.stop_event.clear()
@@ -252,11 +249,9 @@ class TestExecutor:
             self.all_clients.append(test_client)
             
             
-    def _connect_initial_clients(self) -> None:
-        
-        # Connect the specified number of clients
-        init_connected_client_count = (int)(self.current_config.client_count * self.current_config.pct_connected_clients_on_init)
-        clients_to_connect = random.sample(self.all_clients, init_connected_client_count)
+    def _connect_all_clients(self) -> None:
+        # Connect any non-connected client specified number of clients
+        clients_to_connect = [x for x in self.all_clients if not x.is_connected]
         
         for test_client in clients_to_connect:
             result_code = GlobalDefs.CLIENT_MODULE.connect_client(test_client.client, self.broker_address, self.broker_port)
@@ -402,7 +397,7 @@ class TestExecutor:
         connected_clients = [client for client in self.all_clients if client.is_connected]
                 
         # Disconnect the specified number of clients
-        clients_to_disconnect_count = (int)(len(connected_clients) * self.current_config.pct_to_disconnect)
+        clients_to_disconnect_count = (int)(len(connected_clients) * 0.25)
         clients_to_disconnect = random.sample(connected_clients, clients_to_disconnect_count)
                 
         for test_client in clients_to_disconnect:
@@ -422,24 +417,6 @@ class TestExecutor:
             
         for test_client in connected_clients:
             GlobalDefs.CLIENT_MODULE.disconnect_client(test_client.client)
-    
-    
-    def _reconnect_clients(self) -> None:
-        # Find disconnected clients
-        disconnected_clients = [client for client in self.all_clients if not client.is_connected]
-                
-        # Connect the specified number of clients
-        clients_to_reconnect_count = (int)(len(disconnected_clients) * self.current_config.pct_to_reconnect)
-        clients_to_reconnect = random.sample(disconnected_clients, clients_to_reconnect_count)
-                
-        for test_client in clients_to_reconnect:
-            result_code = GlobalDefs.CLIENT_MODULE.connect_client(test_client.client, self.broker_address, self.broker_port, 
-                                                                  clean_start=False)
-    
-            if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
-                test_client.client.loop_start()
-            else:
-                raise RuntimeError(f"Failed to connect client {test_client.name}")
             
     def _shuffle_publication_purposes(self) -> None:
         
