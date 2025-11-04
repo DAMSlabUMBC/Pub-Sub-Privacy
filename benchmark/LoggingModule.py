@@ -1,9 +1,11 @@
 import threading
 import queue
 import sys
+from enum import Enum
 from pathlib import Path
 from typing import TextIO
 from GlobalDefs import ExitCode
+import GlobalDefs
 
 SEED_LABEL: str = "SET_SEED"
 PM_METHOD_LABEL: str = "SET_PURPOSE_MANAGEMENT_METHOD"
@@ -15,6 +17,16 @@ OP_PUBLISH_LABEL: str = "PUBLISH_OP"
 RECV_LABEL: str = "RECV"
 OP_RECV_LABEL: str = "RECV_OP"
 SEPARATOR: str = "@@"
+
+class ConsoleLogLevel(Enum):
+    ERROR = "ERROR"
+    WARNING = "WARNING"
+    INFO = "INFO"
+    DEBUG = "DEBUG"
+
+def console_log(level: ConsoleLogLevel, message: str):
+    if level is not ConsoleLogLevel.DEBUG or GlobalDefs.VERBOSE_LOGGING:
+        print(f"[{level.value}]\t {message}")
 
 class ResultLogger:
 

@@ -58,7 +58,7 @@ class DeterministicTestExecutor(TestExecutor):
         print(f"Deterministic test configured!")
         self.event_scheduler.print_schedule()
 
-    def perform_deterministic_test(self, test_config: DeterministicTestConfiguration):
+    def perform_deterministic_test(self, test_config: TestConfiguration):
         """Run a test with deterministic scheduling"""
         if not test_config.use_deterministic_scheduling:
             # Fall back to legacy mode
@@ -121,7 +121,7 @@ class DeterministicTestExecutor(TestExecutor):
 
         print(f"Cleanup complete!")
 
-    def _setup_purpose_definitions(self, test_config: DeterministicTestConfiguration):
+    def _setup_purpose_definitions(self, test_config: TestConfiguration):
         """Load purpose definitions into the device manager"""
         for purpose_id, purpose_info in test_config.purpose_definitions.items():
             purpose_def = PurposeDefinition(
@@ -130,7 +130,7 @@ class DeterministicTestExecutor(TestExecutor):
             )
             self.device_manager.register_purpose_definition(purpose_def)
 
-    def _setup_device_definitions(self, test_config: DeterministicTestConfiguration):
+    def _setup_device_definitions(self, test_config: TestConfiguration):
         """Load device definitions into the device manager"""
         for dev_id, dev_config in test_config.device_definitions.items():
             dev_type = dev_config['type']
@@ -155,7 +155,7 @@ class DeterministicTestExecutor(TestExecutor):
 
             self.device_manager.register_device_definition(device_def)
 
-    def _create_device_instances(self, test_config: DeterministicTestConfiguration):
+    def _create_device_instances(self, test_config: TestConfiguration):
         """Create device instances from definitions"""
         for instance_config in test_config.device_instances_config:
             device_def_id = instance_config['device_def_id']
@@ -188,7 +188,7 @@ class DeterministicTestExecutor(TestExecutor):
                 # Set user data for callbacks
                 mqtt_client.user_data_set(device_instance)
 
-    def _setup_event_scheduler(self, test_config: DeterministicTestConfiguration):
+    def _setup_event_scheduler(self, test_config: TestConfiguration):
         """Setup scheduled events"""
         # Register event handlers
         self.event_scheduler.register_handler("connect_all", self._handle_connect_all)
@@ -209,7 +209,7 @@ class DeterministicTestExecutor(TestExecutor):
                 description=event_config.get('description', '')
             )
 
-    def _setup_broker_monitoring(self, test_config: DeterministicTestConfiguration):
+    def _setup_broker_monitoring(self, test_config: TestConfiguration):
         """Setup broker monitoring"""
         self.broker_monitor = BrokerMonitor(test_config.node_exporter_url)
 
@@ -264,7 +264,7 @@ class DeterministicTestExecutor(TestExecutor):
         # Mark as published
         device_instance.mark_published(elapsed_ms)
 
-    def _calculate_optimal_sleep_time(self, test_config: DeterministicTestConfiguration) -> float:
+    def _calculate_optimal_sleep_time(self, test_config: TestConfiguration) -> float:
         """Calculate optimal sleep time based on next event and publication schedules"""
         min_sleep = 0.001  # 1ms minimum
         max_sleep = 0.01  # 10ms maximum

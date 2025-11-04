@@ -3,6 +3,8 @@ import os
 import sys
 from typing import List, Dict
 from GlobalDefs import ExitCode, PurposeManagementMethod
+import GlobalDefs
+from LoggingModule import console_log, ConsoleLogLevel
 
 class TestConfiguration:
     
@@ -63,6 +65,7 @@ class ConfigParser():
     the_config: BenchmarkConfiguration = BenchmarkConfiguration()
 
     def parse_config(self, file_path) -> BenchmarkConfiguration:
+
         # Verify file exists
         if not os.path.exists(file_path):
             print(f"Configuration file not found at {file_path}")
@@ -162,7 +165,7 @@ class ConfigParser():
         # Parse test (currently only supports one)
         test_yaml = data["test"]
         
-        if not "name" in test:
+        if not "name" in test_yaml:
             raise Exception("name not found for test config")
         name = test_yaml["name"]
 
@@ -216,12 +219,12 @@ class ConfigParser():
     
         self.the_config.test_list.append(test_config)
         
-        print(f"[ConfigParser] Parsed configuration:")
-        print(f"  - Purposes: {len(test_config.purpose_definitions)}")
-        print(f"  - Device definitions: {len(test_config.device_definitions)}")
-        print(f"  - Device instances: {len(test_config.device_instances_config)}")
-        print(f"  - Scheduled events: {len(test_config.scheduled_events)}")
-        
+        if GlobalDefs.VERBOSE_LOGGING:
+            console_log(ConsoleLogLevel.DEBUG, f"[ConfigParser] Parsed configuration:")
+            console_log(ConsoleLogLevel.DEBUG, f"  - Purposes: {len(test_config.purpose_definitions)}")
+            console_log(ConsoleLogLevel.DEBUG, "  - Device definitions: {len(test_config.device_definitions)}")
+            console_log(ConsoleLogLevel.DEBUG, "  - Device instances: {len(test_config.device_instances_config)}")
+            console_log(ConsoleLogLevel.DEBUG, f"  - Scheduled events: {len(test_config.scheduled_events)}")
 
     def _parse_purpose_definitions(self, data: Dict) -> Dict:
         """Parse purpose definitions from config"""

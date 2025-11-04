@@ -48,6 +48,8 @@ class ExitCode(IntEnum):
 CLIENT_MODULE: ModuleType
 LOGGING_MODULE: 'ResultLogger'
 
+VERBOSE_LOGGING: bool = False
+
 # These should be assigned to based on the config file
 REG_BY_TOPIC_PUB_REG_TOPIC: str = ""
 REG_BY_TOPIC_SUB_REG_TOPIC: str= ""
