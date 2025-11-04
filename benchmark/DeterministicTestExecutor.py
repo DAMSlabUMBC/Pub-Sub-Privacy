@@ -2,37 +2,14 @@ import time
 import random
 from typing import Dict, List, Optional
 import GlobalDefs
-from TestExecutor import TestExecutor, TestConfiguration
+from ConfigParser import TestConfiguration
+from TestExecutor import TestExecutor
 from EventScheduler import EventScheduler
 from DeviceDefinitions import (
     DeviceManager, DeviceInstance, PublisherDefinition,
     SubscriberDefinition, PurposeDefinition
 )
 from BrokerMonitor import BrokerMonitor
-
-
-class DeterministicTestConfiguration(TestConfiguration):
-    """Test configuration with deterministic scheduling and per-device rates"""
-
-    # New fields for deterministic mode
-    use_deterministic_scheduling: bool = False
-    device_definitions: Dict = None
-    device_instances_config: List = None
-    scheduled_events: List = None
-    purpose_definitions: Dict = None
-
-    # Broker monitoring
-    monitor_broker: bool = False
-    node_exporter_url: str = "http://localhost:9100/metrics"
-    monitor_interval_ms: int = 1000
-
-    def __init__(self, name: str, test_duration_ms: int, client_count: int):
-        super().__init__(name, test_duration_ms, client_count)
-        self.device_definitions = {}
-        self.device_instances_config = []
-        self.scheduled_events = []
-        self.purpose_definitions = {}
-
 
 class DeterministicTestExecutor(TestExecutor):
     """Test executor with deterministic event scheduling and per-device publication rates"""
@@ -48,7 +25,7 @@ class DeterministicTestExecutor(TestExecutor):
         self.test_start_time_ms: float = 0.0
         self.is_deterministic_mode: bool = False
 
-    def setup_deterministic_test(self, test_config: DeterministicTestConfiguration):
+    def setup_deterministic_test(self, test_config: TestConfiguration):
         """Setup test with deterministic scheduling"""
         if not test_config.use_deterministic_scheduling:
             # Fall back to legacy mode

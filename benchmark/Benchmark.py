@@ -5,8 +5,8 @@ from os import path
 sys.path.insert(0, path.dirname(path.abspath(__file__)))
 
 import GlobalDefs
-from DeterministicConfigParser import DeterministicConfigParser
-from DeterministicTestExecutor import DeterministicTestExecutor, DeterministicTestConfiguration
+from ConfigParser import ConfigParser, TestConfiguration
+from DeterministicTestExecutor import DeterministicTestExecutor
 from LoggingModule import ResultLogger
 import importlib
 import time
@@ -15,7 +15,7 @@ import time
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser(
-        description='Run deterministic pub/sub privacy benchmark tests'
+        description='Run MQTT-DAP benchmark tests'
     )
 
     subparsers = parser.add_subparsers(title='subcommands',
@@ -105,7 +105,7 @@ def _validate_arguments(args: argparse.Namespace) -> bool:
 def run_tests(config, logfile, broker_address, port):
     # Parse configuration
     print(f"\nLoading configuration from: {config}")
-    config_parser = DeterministicConfigParser()
+    config_parser = ConfigParser()
     try:
         benchmark_config = config_parser.parse_config(config)
     except Exception as e:
@@ -165,7 +165,7 @@ def run_tests(config, logfile, broker_address, port):
         print("\n" + "=" * 80)
 
         # Check if deterministic mode
-        if isinstance(test_config, DeterministicTestConfiguration) and test_config.use_deterministic_scheduling:
+        if isinstance(test_config, TestConfiguration):
             print(f"Running DETERMINISTIC test: {test_config.name}")
             print("=" * 80)
             executor.setup_deterministic_test(test_config)
