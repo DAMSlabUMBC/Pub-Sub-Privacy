@@ -141,7 +141,10 @@ def run_tests(config, logfile, broker_address, port):
     # Setup logging
     if logfile is None:
         timestring = time.strftime("%Y-%m-%d_%H-%M-%S")
-        logfile = f"{benchmark_config.log_output_dir}/{benchmark_config.this_node_name}_{timestring}.log"
+        
+        # Use config file name by default
+        config_name = path.splitext(path.basename(config))[0]
+        logfile = f"{benchmark_config.log_output_dir}/{config_name}_{timestring}.log"
 
     console_log(ConsoleLogLevel.INFO, f"Logging to: {logfile}")
     GlobalDefs.LOGGING_MODULE = ResultLogger()
