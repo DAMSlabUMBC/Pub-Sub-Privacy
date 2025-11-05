@@ -270,7 +270,7 @@ class ConfigParser():
         device_id = device_def['id']
 
         # Required fields
-        required_fields = ['topic', 'initial_purpose', 'pub_period_ms',
+        required_fields = ['topic', 'pub_period_ms',
                           'min_payload_bytes', 'max_payload_bytes']
         for field in required_fields:
             if field not in device_def:
@@ -279,7 +279,6 @@ class ConfigParser():
         return {
             'type': 'publisher',
             'topic': device_def['topic'],
-            'initial_purpose': device_def['initial_purpose'],
             'pub_period_ms': device_def['pub_period_ms'],
             'min_payload_bytes': device_def['min_payload_bytes'],
             'max_payload_bytes': device_def['max_payload_bytes']
@@ -290,15 +289,14 @@ class ConfigParser():
         device_id = device_def['id']
 
         # Required fields
-        required_fields = ['topic_filter', 'purpose_filter']
+        required_fields = ['topic_filter']
         for field in required_fields:
             if field not in device_def:
                 raise Exception(f"Subscriber {device_id} missing required field: {field}")
 
         return {
             'type': 'subscriber',
-            'topic_filter': device_def['topic_filter'],
-            'purpose_filter': device_def['purpose_filter']
+            'topic_filter': device_def['topic_filter']
         }
 
     def _parse_device_instances(self, test_data: Dict) -> List:
@@ -307,17 +305,21 @@ class ConfigParser():
 
         device_instances = test_data.get('device_instances', [])
         for instance_config in device_instances:
+            
+            # Required fields
+            required_fields = ['device_def_id', 'instance_id', 'purpose_filter']
+            for field in required_fields:
+                if field not in instance_config:
+                    raise Exception(f"Device instance {instance_config} missing required field: {field}")
+            
             device_def_id = instance_config.get('device_def_id')
-            if not device_def_id:
-                raise Exception("device_instances entry missing 'device_def_id'")
-
             instance_id = instance_config.get('instance_id')
-            if not instance_id:
-                raise Exception("device_instances entry missing 'instance_id'")
+            purpose_filter = instance_config.get('purpose_filter')
 
             instances.append({
                 'device_def_id': device_def_id,
                 'instance_id': instance_id,
+                'purpose_filter': purpose_filter,
                 'count': instance_config.get('count', 1)
             })
 

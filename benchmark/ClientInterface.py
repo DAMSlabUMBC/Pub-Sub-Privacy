@@ -117,7 +117,7 @@ tuple[paho.mqtt.client.MQTTErrorCode, int | None]
 """
 def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, 
                                   topic_filter: str, purpose_filter: str, 
-                                  qos: int = 0, no_local=True) -> List[Tuple[mqtt.MQTTErrorCode, Optional[int], int]]:
+                                  qos: int = 0, no_local=True, existing_subscription=False, previous_purpose_filter="") -> List[Tuple[mqtt.MQTTErrorCode, Optional[int], int]]:
     
     global SUBSCRIPTION_ID_COUNTER
     
@@ -131,7 +131,7 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
     # == Method 0 (No method) ==
     if method == GlobalDefs.PurposeManagementMethod.PM_0:
         
-        # We directly subscribe without care for purposes
+        # We directly subscribe without care for purposes or duplicate subscriptions
         properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
         properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
         result, mid = client.subscribe(topic_filter, options=subscribe_options)
@@ -142,6 +142,25 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
     elif method == GlobalDefs.PurposeManagementMethod.PM_1:
         
         # Under method 1, purposes are encoded as topics
+        
+        # First we need to unsubscribe from all old purpose topics
+        if existing_subscription:
+            old_described_purposes = GlobalDefs.find_described_purposes(previous_purpose_filter)
+            
+            # Convert the purpose list into topics
+            old_topic_list = list()
+            for purpose in old_described_purposes:
+                purpose = purpose.replace('/', '|')
+                purpose_subtopic = f'[{purpose}]'
+                full_topic = f'{topic_filter}/{purpose_subtopic}'
+                old_topic_list.append(full_topic)
+                
+            # Unsubscribe from each topic
+            for topic in old_topic_list:
+                properties = mqtt.Properties(packetType=mqtt.PacketTypes.UNSUBSCRIBE)
+                result, mid = client.unsubscribe(topic, properties=properties)
+
+        # Now find new purposes
         described_purposes = GlobalDefs.find_described_purposes(purpose_filter)
 
         # Convert the purpose list into topics
@@ -156,7 +175,7 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
         for topic in topic_list:
             properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
             properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
-            result, mid = client.subscribe(topic, options=subscribe_options)
+            result, mid = client.subscribe(topic, properties=properties, options=subscribe_options)
             return_list.append((result, mid, SUBSCRIPTION_ID_COUNTER))
             SUBSCRIPTION_ID_COUNTER += 1
     
@@ -164,6 +183,7 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
     elif method == GlobalDefs.PurposeManagementMethod.PM_2 or method == GlobalDefs.PurposeManagementMethod.PM_3:
         
         # Purpose filter is supplied on subscription
+        # Not that we don't have to unsubscribe old subscriptions since the broker handles this by definition
         properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
         properties.UserProperty = (GlobalDefs.PROPERTY_SP, purpose_filter)
         properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
@@ -180,16 +200,17 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
     # == Method 4 ==
     elif method == GlobalDefs.PurposeManagementMethod.PM_4:
         
-        # Perform a normal subscribe first
-        try:
-            properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
-            properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
-            result, mid = client.subscribe(topic_filter, options=subscribe_options)
-            return_list.append((result, mid, SUBSCRIPTION_ID_COUNTER))
-        except Exception as e:
-            return_list.append((mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None, SUBSCRIPTION_ID_COUNTER))
+        # Perform a normal subscribe first if not already subscribed
+        if not existing_subscription:
+            try:
+                properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
+                properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
+                result, mid = client.subscribe(topic_filter, options=subscribe_options)
+                return_list.append((result, mid, SUBSCRIPTION_ID_COUNTER))
+            except Exception as e:
+                return_list.append((mqtt.MQTTErrorCode.MQTT_ERR_UNKNOWN, None, SUBSCRIPTION_ID_COUNTER))
 
-        SUBSCRIPTION_ID_COUNTER += 1
+            SUBSCRIPTION_ID_COUNTER += 1
         
         # If it didn't fail, send registration for subscription purpose
         sp_reg_topic = f"{GlobalDefs.REG_BY_TOPIC_SUB_REG_TOPIC}/{topic_filter}[{purpose_filter}]"

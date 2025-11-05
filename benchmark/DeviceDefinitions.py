@@ -23,7 +23,6 @@ class DeviceDefinition:
 class PublisherDefinition(DeviceDefinition):
     """Publisher device with specific publication rate and payload size"""
     topic: str = ""
-    initial_purpose: str = ""
     pub_period_ms: int = 1000
     min_payload_bytes: int = 100
     max_payload_bytes: int = 1000
@@ -34,7 +33,6 @@ class PublisherDefinition(DeviceDefinition):
 class SubscriberDefinition(DeviceDefinition):
     """Subscriber device with topic filter and purpose filter"""
     topic_filter: str = ""
-    purpose_filter: str = ""
     device_type: str = "subscriber"
 
 
@@ -47,7 +45,7 @@ class DeviceInstance:
     mqtt_client_name: str
     is_connected: bool = False
     is_publishing: bool = False
-    current_purpose: str = ""
+    current_purpose_filter: str = ""
     last_publish_time_ms: float = 0.0
     message_count: int = 0
     message_id_to_send_counter: Dict[int, int] = field(default_factory=dict)
@@ -108,7 +106,7 @@ class DeviceManager:
         self.purpose_definitions[purpose_def.id] = purpose_def
         console_log(ConsoleLogLevel.INFO, f"Registered purpose: {purpose_def.id}", __name__)
 
-    def create_device_instance(self, device_def_id: str, instance_id: str,
+    def create_device_instance(self, device_def_id: str, instance_id: str, purpose_filter: str,
                                mqtt_client: Any, mqtt_client_name: str) -> DeviceInstance:
         """Create a device instance from a definition
 
@@ -133,17 +131,12 @@ class DeviceManager:
 
         device_def = self.device_definitions[device_def_id]
 
-        # Set initial purpose for publishers
-        initial_purpose = ""
-        if isinstance(device_def, PublisherDefinition):
-            initial_purpose = device_def.initial_purpose
-
         instance = DeviceInstance(
             instance_id=instance_id,
             device_definition=device_def,
             mqtt_client=mqtt_client,
             mqtt_client_name=mqtt_client_name,
-            current_purpose=initial_purpose
+            current_purpose_filter=purpose_filter
         )
 
         self.device_instances[instance_id] = instance

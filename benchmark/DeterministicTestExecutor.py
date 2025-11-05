@@ -160,12 +160,12 @@ class DeterministicTestExecutor():
                 time.sleep(sleep_time)
 
         except KeyboardInterrupt:
-            print("\n\tTest interrupted by user")
+            console_log(ConsoleLogLevel.WARNING, f"Test interrupted by user")
         except Exception as e:
-            print(f"\n\tTest failed with error: {e}")
+            console_log(ConsoleLogLevel.WARNING, f"Test failed with error: {e}")
             raise
 
-        print(f"\tTest complete! Cleaning up...")
+        console_log(ConsoleLogLevel.INFO, f"Test complete! Cleaning up...", __name__)
 
         # Stop monitoring
         if self.broker_monitor:
@@ -179,7 +179,7 @@ class DeterministicTestExecutor():
         self._disconnect_all_devices()
         self._clear_previous_test_data()
 
-        print(f"Cleanup complete!")
+        console_log(ConsoleLogLevel.INFO, f"Cleanup complete!", __name__)
 
     def _setup_purpose_definitions(self, test_config: TestConfiguration):
         """Load purpose definitions into the device manager"""
@@ -200,7 +200,6 @@ class DeterministicTestExecutor():
                 device_def = PublisherDefinition(
                     id=dev_id,
                     topic=dev_config['topic'],
-                    initial_purpose=dev_config['initial_purpose'],
                     pub_period_ms=dev_config['pub_period_ms'],
                     min_payload_bytes=dev_config['min_payload_bytes'],
                     max_payload_bytes=dev_config['max_payload_bytes']
@@ -208,8 +207,7 @@ class DeterministicTestExecutor():
             elif dev_type == 'subscriber':
                 device_def = SubscriberDefinition(
                     id=dev_id,
-                    topic_filter=dev_config['topic_filter'],
-                    purpose_filter=dev_config['purpose_filter']
+                    topic_filter=dev_config['topic_filter']
                 )
             else:
                 raise ValueError(f"Unknown device type: {dev_type}")
@@ -221,6 +219,7 @@ class DeterministicTestExecutor():
         for instance_config in test_config.device_instances_config:
             device_def_id = instance_config['device_def_id']
             instance_id = instance_config['instance_id']
+            purpose_filter = instance_config['purpose_filter']
             count = instance_config.get('count', 1)
 
             # Create multiple instances if count > 1
@@ -243,7 +242,7 @@ class DeterministicTestExecutor():
 
                 # Create device instance
                 device_instance = self.device_manager.create_device_instance(
-                    device_def_id, full_instance_id, mqtt_client, client_name
+                    device_def_id, full_instance_id, purpose_filter, mqtt_client, client_name
                 )
 
                 # Set user data for callbacks
@@ -299,7 +298,7 @@ class DeterministicTestExecutor():
             device_instance.mqtt_client,
             self.method,
             device_def.topic,
-            device_instance.current_purpose,
+            device_instance.current_purpose_filter,
             qos=self.current_config.qos,
             payload=payload,
             correlation_data=message_counter
@@ -317,7 +316,7 @@ class DeterministicTestExecutor():
                 topic = topic[:purpose_start_index - 1]
 
             self.pending_publishes[device_instance.mqtt_client_name][message_info.mid] = (
-                topic, device_instance.current_purpose, "DATA", now
+                topic, device_instance.current_purpose_filter, "DATA", now
             )
             
             # Save message counter for correlations
@@ -362,13 +361,13 @@ class DeterministicTestExecutor():
         for device in self.device_manager.get_all_instances():
             self._disconnect_device(device)
 
-    def _handle_connect_devices(self, params):
+    def _handle_connect_devices(self, params, clean_start = True):
         """Connect specific devices"""
         device_ids = params.get('devices', [])
         for device_id in device_ids:
             device = self.device_manager.get_device_instance(device_id)
             if device:
-                self._connect_device(device)
+                self._connect_device(device, clean_start)
 
     def _handle_disconnect_devices(self, params):
         """Disconnect specific devices"""
@@ -380,7 +379,7 @@ class DeterministicTestExecutor():
 
     def _handle_reconnect_devices(self, params):
         """Reconnect specific devices"""
-        self._handle_connect_devices(params)
+        self._handle_connect_devices(params, False)
 
     def _handle_start_publishing(self, params):
         """Start publishing for specific devices"""
@@ -408,24 +407,33 @@ class DeterministicTestExecutor():
         new_purpose = params.get('new_purpose')
 
         device = self.device_manager.get_device_instance(device_id)
-        if device and isinstance(device.device_definition, PublisherDefinition):
-            old_purpose = device.current_purpose
-            device.current_purpose = new_purpose
+        
+        # Publisher purposes
+        if device:
+            old_purpose = device.current_purpose_filter
+            device.current_purpose_filter = new_purpose
             console_log(ConsoleLogLevel.DEBUG, f"Changed purpose for {device_id}: {old_purpose} -> {new_purpose}", __name__)
 
-            # Re-register with broker if needed (for PM methods 3 and 4)
-            device_def = device.device_definition
-            GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(
-                device.mqtt_client, self.method, device_def.topic, new_purpose
-            )
+            # Publisher change
+            if isinstance(device.device_definition, PublisherDefinition):
+                # Re-register with broker if needed (for PM methods 3 and 4)
+                device_def = device.device_definition
+                GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(
+                    device.mqtt_client, self.method, device_def.topic, new_purpose
+                )
+            
+            # Subscriber change 
+            if isinstance(device.device_definition, SubscriberDefinition):
+                self._subscribe_device(device, True, old_purpose)
+        
 
-    def _connect_device(self, device: DeviceInstance):
+    def _connect_device(self, device: DeviceInstance, clean_start: bool = True):
         """Connect a single device"""
         if device.is_connected:
             return
 
         result_code = GlobalDefs.CLIENT_MODULE.connect_client(
-            device.mqtt_client, self.broker_address, self.broker_port
+            device.mqtt_client, self.broker_address, self.broker_port, clean_start
         )
 
         if result_code == 0:  # Success
@@ -468,7 +476,7 @@ class DeterministicTestExecutor():
                 device_def = device_instance.device_definition
                 GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(
                     device_instance.mqtt_client, self.method,
-                    device_def.topic, device_instance.current_purpose
+                    device_def.topic, device_instance.current_purpose_filter
                 )
                 
             # TODO, add operations
@@ -481,7 +489,7 @@ class DeterministicTestExecutor():
 
             GlobalDefs.LOGGING_MODULE.log_disconnect(time.time(), self.my_id, device_instance.mqtt_client_name)
 
-    def _subscribe_device(self, device: DeviceInstance):
+    def _subscribe_device(self, device: DeviceInstance, existing_subscription: bool = False, previous_purpose_filter: str = ""):
         """Subscribe a device to its configured topics"""
         if not isinstance(device.device_definition, SubscriberDefinition):
             return
@@ -492,8 +500,8 @@ class DeterministicTestExecutor():
 
         results = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(
             device.mqtt_client, self.method,
-            device_def.topic_filter, device_def.purpose_filter,
-            self.current_config.qos
+            device_def.topic_filter, device.current_purpose_filter,
+            self.current_config.qos, existing_subscription, previous_purpose_filter
         )
 
         now = time.time()
@@ -503,9 +511,9 @@ class DeterministicTestExecutor():
                 if device.mqtt_client_name not in self.pending_subscribes:
                     self.pending_subscribes[device.mqtt_client_name] = {}
                 self.pending_subscribes[device.mqtt_client_name][mid] = (
-                    device_def.topic_filter, device_def.purpose_filter, sub_id, now
+                    device_def.topic_filter, device.current_purpose_filter, sub_id, now
                 )
-                device.subscribed_topics[device_def.topic_filter] = device_def.purpose_filter
+                device.subscribed_topics[device_def.topic_filter] = device.current_purpose_filter
 
         self.subscribe_lock.release()
 
