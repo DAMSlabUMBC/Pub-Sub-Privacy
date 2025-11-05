@@ -1,39 +1,93 @@
+import paho.mqtt.client as mqtt
+from paho.mqtt.reasoncodes import ReasonCode
+from paho.mqtt.properties import Properties
 import time
 import random
-from typing import Dict, List, Optional
+import ischedule
+import threading
+import sched
+from typing import Dict, List, Optional, Tuple, Any
 import GlobalDefs
 from ConfigParser import TestConfiguration
-from TestExecutor import TestExecutor
 from EventScheduler import EventScheduler
 from DeviceDefinitions import (
     DeviceManager, DeviceInstance, PublisherDefinition,
-    SubscriberDefinition, PurposeDefinition
+    SubscriberDefinition, PurposeDefinition, DeviceDefinition
 )
 from BrokerMonitor import BrokerMonitor
+from LoggingModule import console_log, ConsoleLogLevel
 
-class DeterministicTestExecutor(TestExecutor):
+class DeterministicTestExecutor():
     """Test executor with deterministic event scheduling and per-device publication rates"""
 
-    def __init__(self, executor_id: str, broker_address: str, broker_port: int,
-                 method: GlobalDefs.PurposeManagementMethod, seed: int | None = None):
-        super().__init__(executor_id, broker_address, broker_port, method, seed)
+    class TestClient:
+        client: mqtt.Client
+        name: str
+        subscribed_topics: Dict[str, str] # Maps topic filter to purpose filter
+        publish_topics: Dict[str, str] # Maps topic to purpose
+        is_connected: bool
+        has_set_c1_ops: bool
+        msg_send_counter: int
+        message_id_to_send_counter: Dict[int, int]
+        
+        def __init__(self, client: mqtt.Client, name: str):
+            self.client = client
+            self.name = name
+            self.subscribed_topics = dict()
+            self.publish_topics = dict()
+            self.is_connected = False
+            self.has_set_c1_ops = False
+            self.msg_send_counter = 0
+            self.message_id_to_send_counter = dict()
+            
+        def get_send_counter(self) -> int:
+            ret_val = self.msg_send_counter
+            self.msg_send_counter = self.msg_send_counter + 1
+            return ret_val
 
-        # New components for deterministic mode
+    my_id: str
+    broker_address: str
+    broker_port: int
+    method: GlobalDefs.PurposeManagementMethod
+    current_config: TestConfiguration
+    stop_event: threading.Event
+    duration_scheduler: sched.scheduler
+    
+    all_clients: List[TestClient]
+    pending_publishes: Dict[str, Dict[int, Tuple[str, str, str, float]]] # client name => [message id => (topic, purpose, message_type, timestamp)]
+    pending_subscribes: Dict[str, Dict[int, Tuple[str, str, int, float]]] # client name => [message id => (topic_filter, purpose_filter, sub_id, timestamp)]
+    publish_lock: threading.Lock
+    subscribe_lock: threading.Lock
+
+    def __init__(self, executor_id: str, broker_address: str, broker_port: int,
+                 method: GlobalDefs.PurposeManagementMethod):
+                
+        self.my_id = executor_id
+        self.broker_address = broker_address
+        self.broker_port = broker_port
+        self.method = method
+        self.pending_publishes = dict()
+        self.pending_subscribes = dict()
+        self.stop_event = threading.Event()
+        self.publish_lock = threading.Lock()
+        self.subscribe_lock = threading.Lock()
+          
+        #  Seed the random number generator and write seed to log file
+        seed = int(time.time())
+        random.seed(time.time())
+        GlobalDefs.LOGGING_MODULE.log_seed(seed)
+        
+        # Configure scheduler
+        self.duration_scheduler = sched.scheduler()
+
+        # Scheduling and device management
         self.event_scheduler = EventScheduler()
         self.device_manager = DeviceManager()
         self.broker_monitor: Optional[BrokerMonitor] = None
-        self.test_start_time_ms: float = 0.0
-        self.is_deterministic_mode: bool = False
 
-    def setup_deterministic_test(self, test_config: TestConfiguration):
-        """Setup test with deterministic scheduling"""
-        if not test_config.use_deterministic_scheduling:
-            # Fall back to legacy mode
-            self.setup_test(test_config)
-            return
-
-        print(f"Configuring deterministic test {test_config.name}")
-        self.is_deterministic_mode = True
+    def setup_test(self, test_config: TestConfiguration):
+        # """Setup test with deterministic scheduling"""
+        console_log(ConsoleLogLevel.DEBUG, f"Configuring test {test_config.name}", __name__)
 
         # Clear previous test data
         self._clear_previous_test_data()
@@ -50,39 +104,45 @@ class DeterministicTestExecutor(TestExecutor):
 
         # Setup event scheduler
         self._setup_event_scheduler(test_config)
+        self.event_scheduler.print_schedule()
 
         # Setup broker monitoring if enabled
         if test_config.monitor_broker:
             self._setup_broker_monitoring(test_config)
 
-        print(f"Deterministic test configured!")
-        self.event_scheduler.print_schedule()
+        console_log(ConsoleLogLevel.DEBUG, f"Test configured!",  __name__)
+        
+    def _clear_previous_test_data(self):
+        self.device_manager.clear()
+        self.event_scheduler.clear()
+        self.pending_publishes = dict()
+        if self.broker_monitor:
+            self.broker_monitor.clear_samples()
+        
+        self.current_config = None
+        self.pending_publishes = dict()
+        ischedule.reset()
 
-    def perform_deterministic_test(self, test_config: TestConfiguration):
+    def perform_test(self, test_config: TestConfiguration):
         """Run a test with deterministic scheduling"""
-        if not test_config.use_deterministic_scheduling:
-            # Fall back to legacy mode
-            self.perform_test(test_config)
-            return
 
-        print(f"Running deterministic test {test_config.name}")
+        console_log(ConsoleLogLevel.INFO, f"Starting test {test_config.name} at {time.strftime('%Y-%m-%d %H:%M:%S')}", __name__)
+        console_log(ConsoleLogLevel.INFO, f"Test will run for {test_config.test_duration_ms / 1000.0} second(s)")
 
         # Start scheduler and timer
-        self.test_start_time_ms = time.monotonic() * 1000.0
+        test_start_time_ms = time.monotonic() * 1000.0
         self.event_scheduler.start()
 
         if self.broker_monitor:
             self.broker_monitor.start_monitoring()
 
         # Main test loop
-        test_end_time_ms = self.test_start_time_ms + test_config.test_duration_ms
-        print(f"\tTest will run for {test_config.test_duration_ms / 1000.0} second(s)")
-        print(f"\tTest started at {time.strftime('%Y-%m-%d %H:%M:%S')}!")
+        test_end_time_ms = test_start_time_ms + test_config.test_duration_ms
 
         try:
             while time.monotonic() * 1000.0 < test_end_time_ms:
                 current_time_ms = time.monotonic() * 1000.0
-                elapsed_ms = current_time_ms - self.test_start_time_ms
+                elapsed_ms = current_time_ms - test_start_time_ms
 
                 # Process scheduled events
                 self.event_scheduler.process_due_events()
@@ -116,8 +176,8 @@ class DeterministicTestExecutor(TestExecutor):
         time.sleep(2)
 
         # Cleanup
-        self._disconnect_all_deterministic_devices()
-        self._clear_deterministic_test_data()
+        self._disconnect_all_devices()
+        self._clear_previous_test_data()
 
         print(f"Cleanup complete!")
 
@@ -135,6 +195,7 @@ class DeterministicTestExecutor(TestExecutor):
         for dev_id, dev_config in test_config.device_definitions.items():
             dev_type = dev_config['type']
 
+            device_def: DeviceDefinition
             if dev_type == 'publisher':
                 device_def = PublisherDefinition(
                     id=dev_id,
@@ -170,12 +231,12 @@ class DeterministicTestExecutor(TestExecutor):
                     full_instance_id = instance_id
 
                 # Create MQTT client
-                client_name = f"{self.my_id}__{test_config.name}__{full_instance_id}"
+                client_name = f"{test_config.name}__{full_instance_id}"
                 mqtt_client = GlobalDefs.CLIENT_MODULE.create_v5_client(client_name)
 
                 # Set callbacks
-                mqtt_client.on_connect = self._on_deterministic_connect
-                mqtt_client.on_disconnect = self._on_deterministic_disconnect
+                mqtt_client.on_connect = self._on_connect
+                mqtt_client.on_disconnect = self._on_disconnect
                 mqtt_client.on_subscribe = self._on_subscribe
                 mqtt_client.on_publish = self._on_publish
                 mqtt_client.on_message = self._on_message_recv
@@ -258,6 +319,9 @@ class DeterministicTestExecutor(TestExecutor):
             self.pending_publishes[device_instance.mqtt_client_name][message_info.mid] = (
                 topic, device_instance.current_purpose, "DATA", now
             )
+            
+            # Save message counter for correlations
+            device_instance.message_id_to_send_counter[message_info.mid] = message_counter
 
         self.publish_lock.release()
 
@@ -327,7 +391,7 @@ class DeterministicTestExecutor(TestExecutor):
                 device.is_publishing = True
                 elapsed_ms = self.event_scheduler.get_elapsed_ms()
                 device.last_publish_time_ms = elapsed_ms
-                print(f"[DeterministicTestExecutor] Started publishing for {device_id}")
+                console_log(ConsoleLogLevel.DEBUG, f"Started publishing for {device_id}", __name__)
 
     def _handle_stop_publishing(self, params):
         """Stop publishing for specific devices"""
@@ -336,7 +400,7 @@ class DeterministicTestExecutor(TestExecutor):
             device = self.device_manager.get_device_instance(device_id)
             if device:
                 device.is_publishing = False
-                print(f"[DeterministicTestExecutor] Stopped publishing for {device_id}")
+                console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device_id}", __name__)
 
     def _handle_change_purpose(self, params):
         """Change purpose for a specific device"""
@@ -347,7 +411,7 @@ class DeterministicTestExecutor(TestExecutor):
         if device and isinstance(device.device_definition, PublisherDefinition):
             old_purpose = device.current_purpose
             device.current_purpose = new_purpose
-            print(f"[DeterministicTestExecutor] Changed purpose for {device_id}: {old_purpose} -> {new_purpose}")
+            console_log(ConsoleLogLevel.DEBUG, f"Changed purpose for {device_id}: {old_purpose} -> {new_purpose}", __name__)
 
             # Re-register with broker if needed (for PM methods 3 and 4)
             device_def = device.device_definition
@@ -366,7 +430,7 @@ class DeterministicTestExecutor(TestExecutor):
 
         if result_code == 0:  # Success
             device.mqtt_client.loop_start()
-            print(f"[DeterministicTestExecutor] Connecting device: {device.instance_id}")
+            console_log(ConsoleLogLevel.DEBUG, f"Connecting device: {device.instance_id}", __name__)
         else:
             raise RuntimeError(f"Failed to connect device {device.instance_id}")
 
@@ -377,33 +441,23 @@ class DeterministicTestExecutor(TestExecutor):
 
         GlobalDefs.CLIENT_MODULE.disconnect_client(device.mqtt_client)
         device.is_connected = False
-        print(f"[DeterministicTestExecutor] Disconnected device: {device.instance_id}")
+        console_log(ConsoleLogLevel.INFO, f"Disconnected device: {device.instance_id}", __name__)
 
-    def _disconnect_all_deterministic_devices(self):
-        """Disconnect all deterministic devices"""
+    def _disconnect_all_devices(self):
+        """Disconnect all devices"""
         for device in self.device_manager.get_all_instances():
-            if device.is_connected:
-                self._disconnect_device(device)
+            self._disconnect_device(device)
 
-    def _clear_deterministic_test_data(self):
-        """Clear deterministic test data"""
-        self.device_manager.clear()
-        self.event_scheduler.clear()
-        if self.broker_monitor:
-            self.broker_monitor.clear_samples()
-        self.test_start_time_ms = 0.0
-        self.is_deterministic_mode = False
-
-    # Modified Callbacks for Deterministic Mode
-    def _on_deterministic_connect(self, client, userdata, flags, reason_code, properties):
-        """Callback for device connection in deterministic mode"""
+    ###################################     
+    #   CALLBACK FUNCTIONS
+    ###################################
+    def _on_connect(self, client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags, reason_code: ReasonCode, properties: Properties):
+        """Callback for device connection"""
         if reason_code == 0:  # Success
             device_instance: DeviceInstance = userdata
             device_instance.is_connected = True
 
-            GlobalDefs.LOGGING_MODULE.log_connect(
-                time.time(), self.my_id, device_instance.mqtt_client_name
-            )
+            GlobalDefs.LOGGING_MODULE.log_connect(time.time(), self.my_id, device_instance.mqtt_client_name)
 
             # Subscribe if this is a subscriber
             if isinstance(device_instance.device_definition, SubscriberDefinition):
@@ -416,16 +470,16 @@ class DeterministicTestExecutor(TestExecutor):
                     device_instance.mqtt_client, self.method,
                     device_def.topic, device_instance.current_purpose
                 )
+                
+            # TODO, add operations
 
-    def _on_deterministic_disconnect(self, client, userdata, flags, reason_code, properties):
-        """Callback for device disconnection in deterministic mode"""
+    def _on_disconnect(self, client: mqtt.Client, userdata: Any, flags: mqtt.DisconnectFlags, reason_code: ReasonCode, properties: Properties):
+        """Callback for device disconnection"""
         if reason_code == 0:  # Success
             device_instance: DeviceInstance = userdata
             device_instance.is_connected = False
 
-            GlobalDefs.LOGGING_MODULE.log_disconnect(
-                time.time(), self.my_id, device_instance.mqtt_client_name
-            )
+            GlobalDefs.LOGGING_MODULE.log_disconnect(time.time(), self.my_id, device_instance.mqtt_client_name)
 
     def _subscribe_device(self, device: DeviceInstance):
         """Subscribe a device to its configured topics"""
@@ -454,3 +508,95 @@ class DeterministicTestExecutor(TestExecutor):
                 device.subscribed_topics[device_def.topic_filter] = device_def.purpose_filter
 
         self.subscribe_lock.release()
+
+    def _on_subscribe(self, client: mqtt.Client, userdata: Any, mid: Any, reason_code_list: List[ReasonCode], properties : Properties):
+        
+        # Make sure we're not in a subscribe
+        self.subscribe_lock.acquire()
+        
+        # We can release immediately since this is a callback
+        # We only had to block until the publications which will 
+        # trigger this function had their information set
+        self.subscribe_lock.release()
+        
+        device_instance: DeviceInstance = userdata
+        
+        # Check if message exists and was successful
+        if device_instance.mqtt_client_name in self.pending_subscribes:
+            if mid in self.pending_subscribes[device_instance.mqtt_client_name]: 
+                    
+                # We only do one subscribe per packet so this is always len one and is success for QoS 0/1/2
+                if reason_code_list[0] == 0 or reason_code_list[0] == 1 or reason_code_list[0] == 2:
+                    topic_filter, purpose_filter, sub_id, time = self.pending_subscribes[device_instance.mqtt_client_name][mid]
+                    GlobalDefs.LOGGING_MODULE.log_subscribe(time, self.my_id, device_instance.mqtt_client_name, topic_filter, purpose_filter, sub_id)
+        
+    
+    def _on_publish(self, client: mqtt.Client, userdata: Any, mid:int, reason_code: ReasonCode, properties: Properties):    
+        
+        # Make sure we're not in a publish
+        self.publish_lock.acquire()
+        
+        # We can release immediately since this is a callback
+        # We only had to block until the publications which will 
+        # trigger this function had their information set
+        self.publish_lock.release()
+        
+        device_instance: DeviceInstance = userdata
+        
+        # Check if message exists and was successful
+        if device_instance.mqtt_client_name in self.pending_publishes:
+            if mid in self.pending_publishes[device_instance.mqtt_client_name]: 
+                
+                corr_data = device_instance.message_id_to_send_counter[mid]
+                    
+                # If successful
+                if reason_code == 0:
+                    topic, purpose, op_type, time = self.pending_publishes[device_instance.mqtt_client_name][mid]
+                    
+                    # Do not log communications to the broker
+                    # if not topic[0] == '$':
+                    
+                    # Check if operational or data
+                    if op_type == "DATA":
+                        # Log message
+                        GlobalDefs.LOGGING_MODULE.log_publish(time, self.my_id, device_instance.mqtt_client_name, corr_data, topic, purpose, op_type)
+                    else:
+                        # Log message
+                        GlobalDefs.LOGGING_MODULE.log_operation_publish(time, self.my_id, device_instance.mqtt_client_name, corr_data, topic, purpose, op_type, self.current_config.possible_operations[op_type])
+                
+                
+    def _on_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):
+        
+        operational_message = False
+        operation_type = ""
+        sending_client = "UNKNOWN"
+        op_message_type = "OP"
+        correlation_data = -1
+        sub_id: List[int] = list()
+        device_instance: DeviceInstance = userdata
+        
+        # Check properties
+        if message.properties is not None:
+            if hasattr(message.properties, "UserProperty"):
+                for name, value in message.properties.UserProperty:
+                    if name == GlobalDefs.PROPERTY_OPERATION:
+                        operational_message = True
+                        operation_type = value
+                    elif name == GlobalDefs.PROPERTY_ID:
+                        sending_client = value
+                    elif name == GlobalDefs.PROPERTY_OP_STATUS:
+                        op_message_type = value
+                        
+            if hasattr(message.properties, "CorrelationData"):
+                correlation_data = int.from_bytes(message.properties.CorrelationData, byteorder='big', signed=False)
+                
+            if hasattr(message.properties, "SubscriptionIdentifier"):
+                sub_id = message.properties.SubscriptionIdentifier
+            else:
+                sub_id.append(-1)
+
+        # Log messages
+        if operational_message:
+            GlobalDefs.LOGGING_MODULE.log_operation_recv(time.time(), self.my_id, device_instance.mqtt_client_name, sending_client, correlation_data, message.topic, operation_type, self.current_config.possible_operations[operation_type], op_message_type, sub_id[0])
+        else:
+            GlobalDefs.LOGGING_MODULE.log_recv(time.time(), self.my_id, device_instance.mqtt_client_name, sending_client, correlation_data, message.topic, "DATA", sub_id[0])

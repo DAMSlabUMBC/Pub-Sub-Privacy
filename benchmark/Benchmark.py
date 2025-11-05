@@ -153,33 +153,24 @@ def run_tests(config, logfile, broker_address, port):
 
     GlobalDefs.LOGGING_MODULE.log_pm_method(benchmark_config.method.value)
 
-    # # Create test executor
-    # print(f"\nConnecting to broker: {broker_address}:{port}")
-    # print(f"Using purpose management method: {benchmark_config.method.value}")
+    # Create test executor
+    console_log(ConsoleLogLevel.INFO, f"Connecting to broker: {broker_address}:{port}")
+    console_log(ConsoleLogLevel.INFO, f"Using purpose management method: {benchmark_config.method.value}")
 
-    # executor = DeterministicTestExecutor(
-    #     benchmark_config.this_node_name,
-    #     broker_address,
-    #     port,
-    #     benchmark_config.method,
-    #     benchmark_config.seed
-    # )
+    executor = DeterministicTestExecutor(
+        benchmark_config.this_node_name,
+        broker_address,
+        port,
+        benchmark_config.method,
+    )
 
-    # # Run each test
-    # for test_config in benchmark_config.test_list:
-    #     print("\n" + "=" * 80)
-
-    #     # Check if deterministic mode
-    #     if isinstance(test_config, TestConfiguration):
-    #         print(f"Running DETERMINISTIC test: {test_config.name}")
-    #         print("=" * 80)
-    #         executor.setup_deterministic_test(test_config)
-    #         executor.perform_deterministic_test(test_config)
-    #     else:
-    #         print(f"Running LEGACY test: {test_config.name}")
-    #         print("=" * 80)
-    #         executor.setup_test(test_config)
-    #         executor.perform_test(test_config)
+    # Run each test
+    for test_config in benchmark_config.test_list:
+        print("\n" + "-" * 80)
+        print(f"Running test: {test_config.name}")
+        print("-" * 80)
+        executor.setup_test(test_config)
+        executor.perform_test(test_config)
 
     # Shutdown
     GlobalDefs.LOGGING_MODULE.shutdown()

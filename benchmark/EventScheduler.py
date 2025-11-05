@@ -2,7 +2,7 @@ import time
 import heapq
 from typing import Callable, Dict, List, Optional, Any
 from dataclasses import dataclass, field
-
+from LoggingModule import console_log, ConsoleLogLevel
 
 @dataclass(order=True)
 class ScheduledEvent:
@@ -48,7 +48,7 @@ class EventScheduler:
             description=description
         )
         heapq.heappush(self.events, event)
-        print(f"[EventScheduler] Scheduled '{event_type}' at {time_ms}ms: {description}")
+        console_log(ConsoleLogLevel.INFO, f"Scheduled '{event_type}' at {time_ms}ms: {description}", __name__)
 
     def register_handler(self, event_type: str, handler: Callable):
         """Register a handler function for an event type
@@ -61,18 +61,18 @@ class EventScheduler:
             Function to call when event fires
         """
         self.handlers[event_type] = handler
-        print(f"[EventScheduler] Registered handler for '{event_type}'")
+        console_log(ConsoleLogLevel.INFO, f"Registered handler for '{event_type}'", __name__)
 
     def start(self):
         """Start the scheduler (record start time)"""
         self.start_time = time.monotonic()
         self.is_running = True
-        print(f"[EventScheduler] Started at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        console_log(ConsoleLogLevel.INFO, f"Started at {time.strftime('%Y-%m-%d %H:%M:%S')}", __name__)
 
     def stop(self):
         """Stop the scheduler"""
         self.is_running = False
-        print(f"[EventScheduler] Stopped")
+        console_log(ConsoleLogLevel.INFO, f"Stopped", __name__)
 
     def get_elapsed_ms(self) -> Optional[float]:
         """Get elapsed time in milliseconds since start"""
@@ -118,22 +118,22 @@ class EventScheduler:
         self.events = []
         self.start_time = None
         self.is_running = False
-        print(f"[EventScheduler] Cleared all events")
+        console_log(ConsoleLogLevel.DEBUG, f"Cleared all events", __name__)
 
     def _fire_event(self, event: ScheduledEvent):
         """Fire an event by calling its registered handler"""
-        print(f"[EventScheduler] Firing event '{event.event_type}' at "
-              f"{self.get_elapsed_ms():.0f}ms: {event.description}")
+        console_log(ConsoleLogLevel.INFO, f"Firing event '{event.event_type}' at "
+              f"{self.get_elapsed_ms():.0f}ms: {event.description}", __name__)
 
         handler = self.handlers.get(event.event_type)
         if handler:
             try:
                 handler(event.params)
             except Exception as e:
-                print(f"[EventScheduler] ERROR in handler for '{event.event_type}': {e}")
+                console_log(ConsoleLogLevel.ERROR, f"In handler for '{event.event_type}': {e}", __name__)
                 raise
         else:
-            print(f"[EventScheduler] WARNING: No handler registered for event type '{event.event_type}'")
+            console_log(ConsoleLogLevel.WARNING, f"No handler registered for event type '{event.event_type}'", __name__)
 
     def get_scheduled_events(self) -> List[ScheduledEvent]:
         """Get a list of all scheduled events (sorted by time)"""
@@ -141,8 +141,8 @@ class EventScheduler:
 
     def print_schedule(self):
         """Print all scheduled events for debugging"""
-        print("\n[EventScheduler] Scheduled Events:")
-        print("-" * 80)
+        console_log(ConsoleLogLevel.DEBUG, f"Scheduled Events:", __name__)
+        console_log(ConsoleLogLevel.DEBUG, "-" * 80, __name__)
         for event in self.get_scheduled_events():
-            print(f"  {event.time_ms:>8.0f}ms | {event.event_type:20s} | {event.description}")
-        print("-" * 80)
+            console_log(ConsoleLogLevel.DEBUG, f"  {event.time_ms:>8.0f}ms | {event.event_type:20s} | {event.description}", __name__)
+        console_log(ConsoleLogLevel.DEBUG, "-" * 80, __name__)

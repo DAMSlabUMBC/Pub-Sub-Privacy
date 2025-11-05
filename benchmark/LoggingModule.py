@@ -24,9 +24,11 @@ class ConsoleLogLevel(Enum):
     INFO = "INFO"
     DEBUG = "DEBUG"
 
-def console_log(level: ConsoleLogLevel, message: str):
+def console_log(level: ConsoleLogLevel, message: str, component: str | None = None):
     if level is not ConsoleLogLevel.DEBUG or GlobalDefs.VERBOSE_LOGGING:
-        print(f"[{level.value}]\t {message}")
+        if component is None:
+            component = "General"
+        print(f"[{level.value} : {component}] {message}")
 
 class ResultLogger:
 

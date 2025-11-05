@@ -1,6 +1,8 @@
+import paho.mqtt.client as mqtt
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import time
+from LoggingModule import console_log, ConsoleLogLevel
 
 
 @dataclass
@@ -41,13 +43,14 @@ class DeviceInstance:
     """Active device instance - tracks runtime state"""
     instance_id: str
     device_definition: DeviceDefinition
-    mqtt_client: any  # Will be mqtt.Client
+    mqtt_client: mqtt.Client
     mqtt_client_name: str
     is_connected: bool = False
     is_publishing: bool = False
-    current_purpose: Optional[str] = None
+    current_purpose: str = ""
     last_publish_time_ms: float = 0.0
     message_count: int = 0
+    message_id_to_send_counter: Dict[int, int] = field(default_factory=dict)
     subscribed_topics: Dict[str, str] = field(default_factory=dict)  # topic_filter -> purpose_filter
 
     def should_publish_now(self, current_time_ms: float) -> bool:
@@ -86,24 +89,27 @@ class DeviceInstance:
 
 class DeviceManager:
     """Manages device definitions and instances"""
+    device_definitions: Dict[str, DeviceDefinition]
+    device_instances: Dict[str, DeviceInstance]
+    purpose_definitions: Dict[str, PurposeDefinition]
 
     def __init__(self):
-        self.device_definitions: Dict[str, DeviceDefinition] = {}
-        self.device_instances: Dict[str, DeviceInstance] = {}
-        self.purpose_definitions: Dict[str, PurposeDefinition] = {}
+        self.device_definitions = {}
+        self.device_instances = {}
+        self.purpose_definitions = {}
 
     def register_device_definition(self, device_def: DeviceDefinition):
         """Register a device definition"""
         self.device_definitions[device_def.id] = device_def
-        print(f"[DeviceManager] Registered device definition: {device_def.id} ({device_def.device_type})")
+        console_log(ConsoleLogLevel.INFO, f"Registered device definition: {device_def.id} ({device_def.device_type})", __name__)
 
     def register_purpose_definition(self, purpose_def: PurposeDefinition):
         """Register a purpose definition"""
         self.purpose_definitions[purpose_def.id] = purpose_def
-        print(f"[DeviceManager] Registered purpose: {purpose_def.id}")
+        console_log(ConsoleLogLevel.INFO, f"Registered purpose: {purpose_def.id}", __name__)
 
     def create_device_instance(self, device_def_id: str, instance_id: str,
-                               mqtt_client: any, mqtt_client_name: str) -> DeviceInstance:
+                               mqtt_client: Any, mqtt_client_name: str) -> DeviceInstance:
         """Create a device instance from a definition
 
         Parameters
@@ -128,7 +134,7 @@ class DeviceManager:
         device_def = self.device_definitions[device_def_id]
 
         # Set initial purpose for publishers
-        initial_purpose = None
+        initial_purpose = ""
         if isinstance(device_def, PublisherDefinition):
             initial_purpose = device_def.initial_purpose
 
@@ -141,7 +147,7 @@ class DeviceManager:
         )
 
         self.device_instances[instance_id] = instance
-        print(f"[DeviceManager] Created device instance: {instance_id} (from {device_def_id})")
+        console_log(ConsoleLogLevel.INFO, f"Created device instance: '{instance_id}' of type {device_def_id}", __name__)
 
         return instance
 
@@ -184,4 +190,4 @@ class DeviceManager:
         self.device_definitions.clear()
         self.device_instances.clear()
         self.purpose_definitions.clear()
-        print(f"[DeviceManager] Cleared all devices and purposes")
+        console_log(ConsoleLogLevel.DEBUG, f"Cleared all devices and purposes", __name__)

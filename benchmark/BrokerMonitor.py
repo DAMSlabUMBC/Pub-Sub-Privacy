@@ -2,6 +2,7 @@ import time
 import requests
 from typing import Dict, List, Optional
 from dataclasses import dataclass
+from LoggingModule import console_log, ConsoleLogLevel
 
 
 @dataclass
@@ -34,18 +35,18 @@ class BrokerMonitor:
         self.samples: List[BrokerMetricsSample] = []
         self.is_monitoring = False
         self.last_sample_time = 0.0
-        print(f"[BrokerMonitor] Initialized with URL: {node_exporter_url}")
+        console_log(ConsoleLogLevel.INFO, f"Initialized with URL: {node_exporter_url}", __name__)
 
     def start_monitoring(self):
         """Start monitoring (allows samples to be collected)"""
         self.is_monitoring = True
         self.last_sample_time = time.time()
-        print(f"[BrokerMonitor] Started monitoring")
+        console_log(ConsoleLogLevel.INFO, f"Started monitoring", __name__)
 
     def stop_monitoring(self):
         """Stop monitoring"""
         self.is_monitoring = False
-        print(f"[BrokerMonitor] Stopped monitoring (collected {len(self.samples)} samples)")
+        console_log(ConsoleLogLevel.INFO, f"Stopped monitoring (collected {len(self.samples)} samples)", __name__)
 
     def collect_sample(self) -> Optional[BrokerMetricsSample]:
         """Collect current broker metrics from Node Exporter
@@ -82,10 +83,10 @@ class BrokerMonitor:
             return sample
 
         except requests.exceptions.RequestException as e:
-            print(f"[BrokerMonitor] ERROR: Failed to collect metrics: {e}")
+            console_log(ConsoleLogLevel.ERROR, f"Failed to collect metrics: {e}", __name__)
             return None
         except Exception as e:
-            print(f"[BrokerMonitor] ERROR: Unexpected error collecting metrics: {e}")
+            console_log(ConsoleLogLevel.ERROR, f"Unexpected error collecting metrics: {e}", __name__)
             return None
 
     def should_collect_sample(self, interval_ms: float) -> bool:
@@ -150,7 +151,7 @@ class BrokerMonitor:
         """Clear all collected samples"""
         sample_count = len(self.samples)
         self.samples = []
-        print(f"[BrokerMonitor] Cleared {sample_count} samples")
+        console_log(ConsoleLogLevel.DEBUG, f"Cleared {sample_count} samples", __name__)
 
     def _parse_prometheus_metrics(self, text: str) -> Dict[str, float]:
         """Parse Prometheus metrics format
@@ -233,7 +234,7 @@ class BrokerMonitor:
     def print_summary(self):
         """Print a summary of collected metrics"""
         if not self.samples:
-            print("[BrokerMonitor] No samples collected")
+            console_log(ConsoleLogLevel.WARNING, "No samples collected", __name__)
             return
 
         averages = self.get_average_metrics()

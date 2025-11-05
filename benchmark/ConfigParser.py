@@ -220,11 +220,11 @@ class ConfigParser():
         self.the_config.test_list.append(test_config)
         
         if GlobalDefs.VERBOSE_LOGGING:
-            console_log(ConsoleLogLevel.DEBUG, f"[ConfigParser] Parsed configuration:")
-            console_log(ConsoleLogLevel.DEBUG, f"  - Purposes: {len(test_config.purpose_definitions)}")
-            console_log(ConsoleLogLevel.DEBUG, "  - Device definitions: {len(test_config.device_definitions)}")
-            console_log(ConsoleLogLevel.DEBUG, "  - Device instances: {len(test_config.device_instances_config)}")
-            console_log(ConsoleLogLevel.DEBUG, f"  - Scheduled events: {len(test_config.scheduled_events)}")
+            console_log(ConsoleLogLevel.DEBUG, f"Parsed configuration:", __name__)
+            console_log(ConsoleLogLevel.DEBUG, f"  - Purposes: {len(test_config.purpose_definitions)}", __name__)
+            console_log(ConsoleLogLevel.DEBUG, "  - Device definitions: {len(test_config.device_definitions)}", __name__)
+            console_log(ConsoleLogLevel.DEBUG, "  - Device instances: {len(test_config.device_instances_config)}", __name__)
+            console_log(ConsoleLogLevel.DEBUG, f"  - Scheduled events: {len(test_config.scheduled_events)}", __name__)
 
     def _parse_purpose_definitions(self, data: Dict) -> Dict:
         """Parse purpose definitions from config"""
