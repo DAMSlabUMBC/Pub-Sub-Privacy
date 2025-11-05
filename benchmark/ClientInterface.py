@@ -2,7 +2,7 @@ import paho.mqtt.client as mqtt
 from paho.mqtt.subscribeoptions import SubscribeOptions
 from paho.mqtt.reasoncodes import ReasonCode
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
-from typing import Callable, Optional, Tuple, List
+from typing import Optional, Tuple, List
 from math import ceil
 import GlobalDefs
 

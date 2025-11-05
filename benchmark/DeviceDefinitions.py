@@ -1,7 +1,6 @@
 import paho.mqtt.client as mqtt
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Any
-import time
 from LoggingModule import console_log, ConsoleLogLevel
 
 

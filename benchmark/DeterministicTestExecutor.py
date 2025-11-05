@@ -56,6 +56,7 @@ class DeterministicTestExecutor():
     all_clients: List[TestClient]
     pending_publishes: Dict[str, Dict[int, Tuple[str, str, str, float]]] # client name => [message id => (topic, purpose, message_type, timestamp)]
     pending_subscribes: Dict[str, Dict[int, Tuple[str, str, int, float]]] # client name => [message id => (topic_filter, purpose_filter, sub_id, timestamp)]
+    sub_ids: Dict[str, Dict[str, int]]
     publish_lock: threading.Lock
     subscribe_lock: threading.Lock
 
@@ -68,6 +69,7 @@ class DeterministicTestExecutor():
         self.method = method
         self.pending_publishes = dict()
         self.pending_subscribes = dict()
+        self.sub_ids = dict()
         self.stop_event = threading.Event()
         self.publish_lock = threading.Lock()
         self.subscribe_lock = threading.Lock()
@@ -514,6 +516,15 @@ class DeterministicTestExecutor():
                     device_def.topic_filter, device.current_purpose_filter, sub_id, now
                 )
                 device.subscribed_topics[device_def.topic_filter] = device.current_purpose_filter
+                
+        # For existing subscriptions using method 4, we won't get a subscription response since we don't send a new subscription
+        # We need to record updated filter and log manually here
+        if existing_subscription and self.method == GlobalDefs.PurposeManagementMethod.PM_4:
+            device.subscribed_topics[device_def.topic_filter] = device.current_purpose_filter
+            sub_id = "UNKNOWN"
+            if device.mqtt_client_name in self.sub_ids and device_def.topic_filter in self.sub_ids[device.mqtt_client_name]:
+                sub_id = self.sub_ids[device.mqtt_client_name][device_def.topic_filter]
+            GlobalDefs.LOGGING_MODULE.log_subscribe(time, self.my_id, device.mqtt_client_name, device_def.topic_filter, device.current_purpose_filter, sub_id)
 
         self.subscribe_lock.release()
 
@@ -536,6 +547,11 @@ class DeterministicTestExecutor():
                 # We only do one subscribe per packet so this is always len one and is success for QoS 0/1/2
                 if reason_code_list[0] == 0 or reason_code_list[0] == 1 or reason_code_list[0] == 2:
                     topic_filter, purpose_filter, sub_id, time = self.pending_subscribes[device_instance.mqtt_client_name][mid]
+                    
+                    if device_instance.mqtt_client_name not in self.sub_ids:
+                        self.sub_ids[device_instance.mqtt_client_name] = dict()
+                    self.sub_ids[device_instance.mqtt_client_name][topic_filter] = sub_id
+                    
                     GlobalDefs.LOGGING_MODULE.log_subscribe(time, self.my_id, device_instance.mqtt_client_name, topic_filter, purpose_filter, sub_id)
         
     
