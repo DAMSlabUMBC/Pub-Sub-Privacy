@@ -9,6 +9,8 @@ import GlobalDefs
 
 SEED_LABEL: str = "SET_SEED"
 PM_METHOD_LABEL: str = "SET_PURPOSE_MANAGEMENT_METHOD"
+CPU_METRICS_LABEL: str = "CPU_METRICS"
+MEM_METRICS_LABEL: str = "MEM_METRICS"
 CONNECT_LABEL: str = "CONNECT"
 DISCONNECT_LABEL: str = "DISCONNECT"
 SUBSCRIBE_LABEL: str = "SUBSCRIBE"
@@ -131,6 +133,14 @@ class ResultLogger:
     # TODO finalize these
     def log_seed(self, seed):
         message = f"{SEED_LABEL}{SEPARATOR}{seed}"
+        self.log_queue.put(message)
+        
+    def log_cpu_metrics(self, min, max, average, variance):
+        message = f"{CPU_METRICS_LABEL}{SEPARATOR}{min}{SEPARATOR}{max}{SEPARATOR}{average}{SEPARATOR}{variance}"
+        self.log_queue.put(message)
+        
+    def log_mem_metrics(self, min, max, average, variance):
+        message = f"{MEM_METRICS_LABEL}{SEPARATOR}{min}{SEPARATOR}{max}{SEPARATOR}{average}{SEPARATOR}{variance}"
         self.log_queue.put(message)
         
     def log_pm_method(self, pm_method):

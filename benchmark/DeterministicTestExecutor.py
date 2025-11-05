@@ -172,13 +172,20 @@ class DeterministicTestExecutor():
         # Stop monitoring
         if self.broker_monitor:
             self.broker_monitor.stop_monitoring()
-            self.broker_monitor.print_summary()
 
         # Give a moment to finish pending operations
         time.sleep(2)
 
         # Cleanup
         self._disconnect_all_devices()
+        
+        # Log out broker metrics
+        if self.broker_monitor:
+            self.broker_monitor.log_summary()
+            
+        # Give a moment to finish pending operations
+        time.sleep(2)
+        
         self._clear_previous_test_data()
 
         console_log(ConsoleLogLevel.INFO, f"Cleanup complete!", __name__)
@@ -259,7 +266,9 @@ class DeterministicTestExecutor():
         self.event_scheduler.register_handler("disconnect", self._handle_disconnect_devices)
         self.event_scheduler.register_handler("reconnect", self._handle_reconnect_devices)
         self.event_scheduler.register_handler("start_publishing", self._handle_start_publishing)
+        self.event_scheduler.register_handler("start_publishing_all", self._handle_start_publishing_all)
         self.event_scheduler.register_handler("stop_publishing", self._handle_stop_publishing)
+        self.event_scheduler.register_handler("stop_publishing_all", self._handle_stop_publishing_all)
         self.event_scheduler.register_handler("change_purpose", self._handle_change_purpose)
 
         # Schedule all events
@@ -389,11 +398,21 @@ class DeterministicTestExecutor():
         for device_id in device_ids:
             device = self.device_manager.get_device_instance(device_id)
             if device and isinstance(device.device_definition, PublisherDefinition):
+                if not device.is_publishing:
+                    device.is_publishing = True
+                    elapsed_ms = self.event_scheduler.get_elapsed_ms()
+                    device.last_publish_time_ms = elapsed_ms
+                    console_log(ConsoleLogLevel.DEBUG, f"Started publishing for {device_id}", __name__)
+                
+    def _handle_start_publishing_all(self, params):
+        """Start publishing for all devices"""
+        for device in self.device_manager.get_all_publishers():
+            if not device.is_publishing:
                 device.is_publishing = True
                 elapsed_ms = self.event_scheduler.get_elapsed_ms()
                 device.last_publish_time_ms = elapsed_ms
-                console_log(ConsoleLogLevel.DEBUG, f"Started publishing for {device_id}", __name__)
-
+                console_log(ConsoleLogLevel.DEBUG, f"Started publishing for {device.instance_id}", __name__)
+                
     def _handle_stop_publishing(self, params):
         """Stop publishing for specific devices"""
         device_ids = params.get('devices', [])
@@ -402,6 +421,13 @@ class DeterministicTestExecutor():
             if device:
                 device.is_publishing = False
                 console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device_id}", __name__)
+                
+    def _handle_stop_publishing_all(self, params):
+        """StaStoprt publishing for all devices"""
+        for device in self.device_manager.get_all_publishers():
+            if device.is_publishing:
+                device.is_publishing = True
+                console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device.instance_id}", __name__)
 
     def _handle_change_purpose(self, params):
         """Change purpose for a specific device"""

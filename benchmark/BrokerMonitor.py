@@ -1,7 +1,9 @@
 import time
+from statistics import mean, variance
 import requests
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+import GlobalDefs
 from LoggingModule import console_log, ConsoleLogLevel
 
 
@@ -10,18 +12,13 @@ class BrokerMetricsSample:
     """A single sample of broker metrics"""
     timestamp: float
     cpu_usage_percent: Optional[float] = None
-    memory_used_bytes: Optional[float] = None
-    network_rx_bytes: Optional[float] = None
-    network_tx_bytes: Optional[float] = None
-    raw_metrics: Dict[str, float] = None
-
-    def __post_init__(self):
-        if self.raw_metrics is None:
-            self.raw_metrics = {}
-
+    mem_usage_percent: Optional[float] = None
 
 class BrokerMonitor:
     """Monitors broker resource usage via Prometheus Node Exporter"""
+    
+    last_cycle_cpu_active_time = None
+    last_cycle_cpu_idle_time = None
 
     def __init__(self, node_exporter_url: str = "http://localhost:9100/metrics"):
         """Initialize broker monitor
@@ -65,18 +62,8 @@ class BrokerMonitor:
             response.raise_for_status()
 
             # Parse Prometheus metrics format
-            raw_metrics = self._parse_prometheus_metrics(response.text)
-
-            # Extract relevant metrics
-            sample = BrokerMetricsSample(
-                timestamp=time.time(),
-                cpu_usage_percent=self._calculate_cpu_usage(raw_metrics),
-                memory_used_bytes=self._calculate_memory_usage(raw_metrics),
-                network_rx_bytes=raw_metrics.get('node_network_receive_bytes_total'),
-                network_tx_bytes=raw_metrics.get('node_network_transmit_bytes_total'),
-                raw_metrics=raw_metrics
-            )
-
+            sample = self._parse_prometheus_metrics(response.text)
+   
             self.samples.append(sample)
             self.last_sample_time = sample.timestamp
 
@@ -112,40 +99,30 @@ class BrokerMonitor:
         """Get all collected samples"""
         return self.samples
 
-    def get_average_metrics(self) -> Dict[str, float]:
-        """Calculate average metrics across all samples
+    def calculate_metrics(self) -> Tuple[Tuple[float, float, float, float], Tuple[float, float, float, float]]:
+        """Calculate metrics across all samples
 
         Returns
         -------
-        dict
-            Average values for each metric
+        Tuple, Tuple
+            Min/Max/Average/Variance values for cpu and mem respectively
         """
         if not self.samples:
-            return {}
-
-        total_samples = len(self.samples)
-        averages = {
-            'cpu_usage_percent': 0.0,
-            'memory_used_bytes': 0.0,
-            'network_rx_bytes': 0.0,
-            'network_tx_bytes': 0.0
-        }
+            return ((-1, -1, -1, -1), (-1, -1, -1, -1))
+        
+        cpu_metrics: List[float] = list()
+        mem_metrics: List[float] = list()
 
         for sample in self.samples:
             if sample.cpu_usage_percent is not None:
-                averages['cpu_usage_percent'] += sample.cpu_usage_percent
-            if sample.memory_used_bytes is not None:
-                averages['memory_used_bytes'] += sample.memory_used_bytes
-            if sample.network_rx_bytes is not None:
-                averages['network_rx_bytes'] += sample.network_rx_bytes
-            if sample.network_tx_bytes is not None:
-                averages['network_tx_bytes'] += sample.network_tx_bytes
+                cpu_metrics.append(sample.cpu_usage_percent)
+            if sample.mem_usage_percent is not None:
+                mem_metrics.append(sample.mem_usage_percent)
+                
+        cpu_tuple = (min(cpu_metrics), max(cpu_metrics), mean(cpu_metrics), variance(cpu_metrics))
+        mem_tuple = (min(mem_metrics), max(mem_metrics), mean(mem_metrics), variance(mem_metrics))
 
-        # Calculate averages
-        for key in averages:
-            averages[key] /= total_samples
-
-        return averages
+        return cpu_tuple, mem_tuple
 
     def clear_samples(self):
         """Clear all collected samples"""
@@ -153,7 +130,7 @@ class BrokerMonitor:
         self.samples = []
         console_log(ConsoleLogLevel.DEBUG, f"Cleared {sample_count} samples", __name__)
 
-    def _parse_prometheus_metrics(self, text: str) -> Dict[str, float]:
+    def _parse_prometheus_metrics(self, text: str) -> BrokerMetricsSample:
         """Parse Prometheus metrics format
 
         Parameters
@@ -163,10 +140,16 @@ class BrokerMonitor:
 
         Returns
         -------
-        dict
-            Metric names to values
+        BrokerMetricsSample
+            Sample of metrics
         """
-        metrics = {}
+        
+        # Initialize counters for metrics that are on more than one line
+        active_cpu_time = 0.0
+        idle_cpu_time = 0.0
+        mem_total = 0.0
+        mem_free = 0.0
+        
         for line in text.split('\n'):
             line = line.strip()
 
@@ -175,75 +158,51 @@ class BrokerMonitor:
                 continue
 
             # Parse metric lines
-            # Format: metric_name{labels} value timestamp
-            # We'll do simple parsing without label support for now
             parts = line.split()
             if len(parts) >= 2:
-                metric_name = parts[0].split('{')[0]  # Remove labels
-                try:
-                    metric_value = float(parts[1])
-                    metrics[metric_name] = metric_value
-                except ValueError:
-                    continue
+                
+                # Check if it's a metric we need
+                # CPU Usage
+                if parts[0].startswith("node_cpu_seconds_total"):
+                    if 'mode="idle"' in parts[0]:
+                        idle_cpu_time += float(parts[1])
+                    else:
+                        active_cpu_time += float(parts[1])
+                        
+                # Memory usage
+                if parts[0].startswith("node_memory_MemFree_bytes"):
+                    mem_free = float(parts[1])
+                    
+                if parts[0].startswith("node_memory_MemTotal_bytes"):
+                    mem_total = float(parts[1])
+                
+        # CPU usage must be calculated in terms of previous cycles since prometheus counts total time
+        cpu_usage_pct = None
+        if self.last_cycle_cpu_active_time is not None and self.last_cycle_cpu_idle_time is not None:
+            delta_active = active_cpu_time - self.last_cycle_cpu_active_time
+            delta_idle = idle_cpu_time - self.last_cycle_cpu_idle_time
+            cpu_usage_pct = (delta_active / (delta_active + delta_idle)) * 100.0
+            
+        self.last_cycle_cpu_active_time = active_cpu_time
+        self.last_cycle_cpu_idle_time = idle_cpu_time
+        
+        # Memory
+        mem_usage_pct = (1.0 - (mem_free / mem_total)) * 100
+        
+        sample = BrokerMetricsSample(
+            timestamp=time.time(),
+            cpu_usage_percent=cpu_usage_pct,
+            mem_usage_percent=mem_usage_pct
+        )
 
-        return metrics
+        return sample
 
-    def _calculate_cpu_usage(self, metrics: Dict[str, float]) -> Optional[float]:
-        """Calculate CPU usage percentage (simplified - requires delta tracking)
-
-        Parameters
-        ----------
-        metrics : dict
-            Raw metrics
-
-        Returns
-        -------
-        float or None
-            CPU usage percentage estimate
-        """
-        # For a simple estimate, we look at the idle time
-        # In a real implementation, you'd calculate delta between samples
-        cpu_idle = metrics.get('node_cpu_seconds_total')
-        if cpu_idle is not None:
-            # This is a very rough estimate - proper calculation requires deltas
-            return 0.0  # Placeholder - proper implementation would track deltas
-
-        return None
-
-    def _calculate_memory_usage(self, metrics: Dict[str, float]) -> Optional[float]:
-        """Calculate memory usage in bytes
-
-        Parameters
-        ----------
-        metrics : dict
-            Raw metrics
-
-        Returns
-        -------
-        float or None
-            Memory used in bytes
-        """
-        mem_total = metrics.get('node_memory_MemTotal_bytes')
-        mem_available = metrics.get('node_memory_MemAvailable_bytes')
-
-        if mem_total is not None and mem_available is not None:
-            return mem_total - mem_available
-
-        return None
-
-    def print_summary(self):
-        """Print a summary of collected metrics"""
+    def log_summary(self):
+        """Log a summary of collected metrics"""
         if not self.samples:
             console_log(ConsoleLogLevel.WARNING, "No samples collected", __name__)
             return
 
-        averages = self.get_average_metrics()
-
-        print("\n[BrokerMonitor] Metrics Summary")
-        print("-" * 60)
-        print(f"Total samples: {len(self.samples)}")
-        print(f"Avg CPU usage: {averages['cpu_usage_percent']:.2f}%")
-        print(f"Avg Memory used: {averages['memory_used_bytes'] / 1024 / 1024:.2f} MB")
-        print(f"Avg Network RX: {averages['network_rx_bytes'] / 1024 / 1024:.2f} MB")
-        print(f"Avg Network TX: {averages['network_tx_bytes'] / 1024 / 1024:.2f} MB")
-        print("-" * 60)
+        cpu_metrics, mem_metrics = self.calculate_metrics()
+        GlobalDefs.LOGGING_MODULE.log_cpu_metrics(cpu_metrics[0], cpu_metrics[1], cpu_metrics[2], cpu_metrics[3])
+        GlobalDefs.LOGGING_MODULE.log_mem_metrics(mem_metrics[0], mem_metrics[1], mem_metrics[2], mem_metrics[3])
