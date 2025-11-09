@@ -7,6 +7,7 @@ sys.path.insert(0, path.dirname(path.abspath(__file__)))
 import GlobalDefs
 from ConfigParser import ConfigParser, TestConfiguration
 from DeterministicTestExecutor import DeterministicTestExecutor
+from TestExecutor import TestExecutor
 from LoggingModule import ResultLogger
 import importlib
 import time
@@ -160,12 +161,29 @@ def run_tests(config, logfile, broker_address, port):
     console_log(ConsoleLogLevel.INFO, f"Connecting to broker: {broker_address}:{port}")
     console_log(ConsoleLogLevel.INFO, f"Using purpose management method: {benchmark_config.method.value}")
 
-    executor = DeterministicTestExecutor(
-        benchmark_config.this_node_name,
-        broker_address,
-        port,
-        benchmark_config.method,
-    )
+    # Choose executor based on whether test uses deterministic scheduling
+    # If test has scheduled_events, use DeterministicTestExecutor, otherwise use TestExecutor
+    use_deterministic = False
+    if benchmark_config.test_list:
+        first_test = benchmark_config.test_list[0]
+        use_deterministic = hasattr(first_test, 'scheduled_events') and len(first_test.scheduled_events) > 0
+
+    if use_deterministic:
+        console_log(ConsoleLogLevel.INFO, "Using Deterministic Test Executor")
+        executor = DeterministicTestExecutor(
+            benchmark_config.this_node_name,
+            broker_address,
+            port,
+            benchmark_config.method,
+        )
+    else:
+        console_log(ConsoleLogLevel.INFO, "Using Randomized Test Executor")
+        executor = TestExecutor(
+            benchmark_config.this_node_name,
+            broker_address,
+            port,
+            benchmark_config.method,
+        )
 
     # Run each test
     for test_config in benchmark_config.test_list:

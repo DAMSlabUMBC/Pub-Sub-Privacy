@@ -1,0 +1,4 @@
+ischedule==1.2.7
+paho-mqtt==2.1.0
+PyYAML==6.0.3
+requests==2.32.5

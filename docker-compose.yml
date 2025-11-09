@@ -1,0 +1,44 @@
+services:
+  # MQTT Broker
+  mosquitto:
+    build:
+      context: ../dams-mosquitto
+      dockerfile: Dockerfile
+    container_name: benchmark-mosquitto
+    ports:
+      - "1883:1883"
+    networks:
+      - benchmark-net
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: benchmark-node-exporter
+    ports:
+      - "9100:9100"
+    networks:
+      - benchmark-net
+
+  # Benchmark Test Runner
+  benchmark-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.benchmark
+    container_name: benchmark-runner
+    depends_on:
+      - mosquitto
+      - node-exporter
+    networks:
+      - benchmark-net
+    volumes:
+      - ./results:/app/results
+      - ./logs:/app/logs
+    environment:
+      - BROKER_ADDRESS=mosquitto
+      - BROKER_PORT=1883
+      - NODE_EXPORTER_URL=http://node-exporter:9100/metrics
+    command: /app/run_all_tests.sh
+
+networks:
+  benchmark-net:
+    driver: bridge

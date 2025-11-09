@@ -6,6 +6,7 @@ import random
 import ischedule
 import threading
 import sched
+from math import ceil  # Need this for encoding correlation data in operational responses
 from typing import Dict, List, Optional, Tuple, Any
 import GlobalDefs
 from ConfigParser import TestConfiguration
@@ -60,9 +61,13 @@ class DeterministicTestExecutor():
     publish_lock: threading.Lock
     subscribe_lock: threading.Lock
 
+    # Operational request tracking
+    next_op_time_ms: float
+    all_operations: Dict[str, str]
+
     def __init__(self, executor_id: str, broker_address: str, broker_port: int,
                  method: GlobalDefs.PurposeManagementMethod):
-                
+
         self.my_id = executor_id
         self.broker_address = broker_address
         self.broker_port = broker_port
@@ -73,12 +78,16 @@ class DeterministicTestExecutor():
         self.stop_event = threading.Event()
         self.publish_lock = threading.Lock()
         self.subscribe_lock = threading.Lock()
-          
+
+        # Operational request tracking
+        self.next_op_time_ms = 0
+        self.all_operations = {}
+
         #  Seed the random number generator and write seed to log file
         seed = int(time.time())
         random.seed(time.time())
         GlobalDefs.LOGGING_MODULE.log_seed(seed)
-        
+
         # Configure scheduler
         self.duration_scheduler = sched.scheduler()
 
@@ -108,6 +117,9 @@ class DeterministicTestExecutor():
         self._setup_event_scheduler(test_config)
         self.event_scheduler.print_schedule()
 
+        # Setup operational requests
+        self._setup_operational_requests(test_config)
+
         # Setup broker monitoring if enabled
         if test_config.monitor_broker:
             self._setup_broker_monitoring(test_config)
@@ -131,6 +143,9 @@ class DeterministicTestExecutor():
         console_log(ConsoleLogLevel.INFO, f"Starting test {test_config.name} at {time.strftime('%Y-%m-%d %H:%M:%S')}", __name__)
         console_log(ConsoleLogLevel.INFO, f"Test will run for {test_config.test_duration_ms / 1000.0} second(s)")
 
+        # Log PM method for metrics calculation
+        GlobalDefs.LOGGING_MODULE.log_pm_method(self.method.value)
+
         # Start scheduler and timer
         test_start_time_ms = time.monotonic() * 1000.0
         self.event_scheduler.start()
@@ -151,6 +166,9 @@ class DeterministicTestExecutor():
 
                 # Publish from devices that are ready
                 self._publish_from_ready_devices(elapsed_ms)
+
+                # Send operational requests if it's time
+                self._send_operational_requests_if_ready(elapsed_ms)
 
                 # Collect broker metrics if needed
                 if self.broker_monitor and self.broker_monitor.should_collect_sample(test_config.monitor_interval_ms):
@@ -283,6 +301,189 @@ class DeterministicTestExecutor():
     def _setup_broker_monitoring(self, test_config: TestConfiguration):
         """Setup broker monitoring"""
         self.broker_monitor = BrokerMonitor(test_config.node_exporter_url)
+
+    def _setup_operational_requests(self, test_config: TestConfiguration):
+        """Setup operational request tracking"""
+        # Build operations dictionary from config
+        self.all_operations = {}
+
+        # Add C1 registration operations
+        if hasattr(test_config, 'c1_reg_operations'):
+            for op in test_config.c1_reg_operations:
+                self.all_operations[op] = "C1_REG"
+
+        # Add all other operations
+        if hasattr(test_config, 'all_operations'):
+            self.all_operations.update(test_config.all_operations)
+
+        # Initialize next op time based on op_send_rate
+        if hasattr(test_config, 'op_send_rate') and test_config.op_send_rate > 0:
+            self.next_op_time_ms = test_config.op_send_rate
+        else:
+            self.next_op_time_ms = float('inf')  # Disable if not configured
+
+    def _send_operational_requests_if_ready(self, elapsed_ms: float):
+        """Send operational requests from subscribers if it's time"""
+        if elapsed_ms < self.next_op_time_ms or not self.all_operations:
+            return
+
+        # Get all connected subscribers
+        subscribers = [d for d in self.device_manager.get_all_subscribers() if d.is_connected]
+
+        if not subscribers:
+            return
+
+        # Pick a random subscriber to send the request
+        subscriber = random.choice(subscribers)
+
+        # Pick a random operation
+        operation = random.choice(list(self.all_operations.keys()))
+        operation_category = self.all_operations[operation]
+
+        # Send the operational request
+        self._send_operational_request(subscriber, operation, operation_category)
+
+        # Schedule next operational request
+        if hasattr(self.current_config, 'op_send_rate') and self.current_config.op_send_rate > 0:
+            self.next_op_time_ms = elapsed_ms + self.current_config.op_send_rate
+
+    def _should_publisher_respond(self, publisher: DeviceInstance, requesting_client: str) -> bool:
+        """Decide if a publisher should respond to an operational request
+
+        Only respond if the requesting client is actually subscribed to this publisher's data.
+        This prevents publishers from responding to irrelevant requests and keeps
+        coverage metrics accurate (avoids over-response).
+        """
+        if not isinstance(publisher.device_definition, PublisherDefinition):
+            return False
+
+        pub_topic = publisher.device_definition.topic
+
+        # Loop through all subscribers to see if the requester is subscribed to our topic
+        for device in self.device_manager.get_all_subscribers():
+            if device.mqtt_client_name == requesting_client:
+                if isinstance(device.device_definition, SubscriberDefinition):
+                    topic_filter = device.device_definition.topic_filter
+
+                    # Check if the subscriber's filter matches our publishing topic
+                    if self._topic_matches_filter(pub_topic, topic_filter):
+                        return True
+
+        # Don't respond if the requester isn't subscribed to our data
+        return False
+
+    def _topic_matches_filter(self, topic: str, topic_filter: str) -> bool:
+        """Check if a topic matches an MQTT topic filter with wildcards
+
+        Supports MQTT wildcards:
+        - '#' matches multiple levels (must be at end)
+        - '+' matches single level
+        """
+        # '#' alone matches everything
+        if topic_filter == "#":
+            return True
+
+        # Exact match
+        if topic_filter == topic:
+            return True
+
+        topic_parts = topic.split('/')
+        filter_parts = topic_filter.split('/')
+
+        # Handle multi-level wildcard '#' at end of filter
+        if filter_parts[-1] == "#":
+            # All parts before '#' must match exactly
+            return topic_parts[:len(filter_parts)-1] == filter_parts[:-1]
+
+        # Without '#', must have same number of levels
+        if len(topic_parts) != len(filter_parts):
+            return False
+
+        # Check each level, '+' matches any single level
+        for t_part, f_part in zip(topic_parts, filter_parts):
+            if f_part == "+":
+                continue
+            if t_part != f_part:
+                return False
+
+        return True
+
+    def _send_operational_response(self, publisher: DeviceInstance, response_topic: str, operation_type: str, correlation_data: int):
+        """Have a publisher send a response to an operational request
+
+        This gets called when a publisher receives an operational request (e.g., Access, Portability)
+        from a subscriber and needs to respond with the requested data.
+        """
+        if not isinstance(publisher.device_definition, PublisherDefinition):
+            return
+
+        # Set up MQTT properties for the response
+        properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, publisher.mqtt_client._client_id)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
+        properties.UserProperty = (GlobalDefs.PROPERTY_OP_STATUS, "Completed")
+
+        # Add correlation data to link response back to original request
+        if correlation_data is not None and correlation_data >= 0:
+            required_bytes = ceil(correlation_data.bit_length() / 8.0) if correlation_data > 0 else 1
+            properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big', signed=False)
+
+        # Create and publish the response
+        payload = f"Response to {operation_type} request"
+        msg_info = publisher.mqtt_client.publish(response_topic, payload=payload, qos=2, properties=properties)
+
+        # Track this response in pending publishes for logging
+        self.publish_lock.acquire()
+        now = time.time()
+
+        if publisher.mqtt_client_name not in self.pending_publishes:
+            self.pending_publishes[publisher.mqtt_client_name] = {}
+
+        self.pending_publishes[publisher.mqtt_client_name][msg_info.mid] = (
+            response_topic, GlobalDefs.OP_PURPOSE, operation_type, now
+        )
+
+        # Store correlation data so we can log it when publish completes
+        if correlation_data is not None and correlation_data >= 0:
+            publisher.message_id_to_send_counter[msg_info.mid] = correlation_data
+
+        self.publish_lock.release()
+
+    def _send_operational_request(self, subscriber: DeviceInstance, operation: str, operation_category: str):
+        """Send an operational request from a subscriber"""
+        _ = operation_category  # Not currently used but available for future logic
+
+        self.publish_lock.acquire()
+
+        message_counter = subscriber.message_count
+        subscriber.message_count += 1
+
+        results = GlobalDefs.CLIENT_MODULE.publish_operation_request(
+            subscriber.mqtt_client,
+            self.method,
+            operation,
+            message_counter
+        )
+
+        now = time.time()
+
+        for message_info, topic in results:
+            if subscriber.mqtt_client_name not in self.pending_publishes:
+                self.pending_publishes[subscriber.mqtt_client_name] = {}
+
+            # Handle PM_1 topic encoding
+            if self.method == GlobalDefs.PurposeManagementMethod.PM_1:
+                purpose_start_index = topic.rfind('[')
+                topic = topic[:purpose_start_index - 1]
+
+            self.pending_publishes[subscriber.mqtt_client_name][message_info.mid] = (
+                topic, GlobalDefs.OP_PURPOSE, operation, now
+            )
+
+            # Save message counter for correlations
+            subscriber.message_id_to_send_counter[message_info.mid] = message_counter
+
+        self.publish_lock.release()
 
     def _publish_from_ready_devices(self, elapsed_ms: float):
         """Publish from all devices that are ready based on their individual publication rates"""
@@ -423,10 +624,10 @@ class DeterministicTestExecutor():
                 console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device_id}", __name__)
                 
     def _handle_stop_publishing_all(self, params):
-        """StaStoprt publishing for all devices"""
+        """Stop publishing for all devices"""
         for device in self.device_manager.get_all_publishers():
             if device.is_publishing:
-                device.is_publishing = True
+                device.is_publishing = False
                 console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device.instance_id}", __name__)
 
     def _handle_change_purpose(self, params):
@@ -506,8 +707,9 @@ class DeterministicTestExecutor():
                     device_instance.mqtt_client, self.method,
                     device_def.topic, device_instance.current_purpose_filter
                 )
-                
-            # TODO, add operations
+
+                # Subscribe to operational topics
+                self._subscribe_device_for_operations(device_instance)
 
     def _on_disconnect(self, client: mqtt.Client, userdata: Any, flags: mqtt.DisconnectFlags, reason_code: ReasonCode, properties: Properties):
         """Callback for device disconnection"""
@@ -553,6 +755,50 @@ class DeterministicTestExecutor():
             GlobalDefs.LOGGING_MODULE.log_subscribe(time, self.my_id, device.mqtt_client_name, device_def.topic_filter, device.current_purpose_filter, sub_id)
 
         self.subscribe_lock.release()
+
+    def _subscribe_device_for_operations(self, device: DeviceInstance):
+        """Subscribe a publisher to operational request topics
+
+        Publishers need to receive operational requests (Access, Portability, etc.) from subscribers.
+        They subscribe to:
+        1. OR_TOPIC (PM_1) or OSYS_TOPIC (PM_2-4) to receive operational requests
+        2. Their own response topic to receive confirmations
+        """
+        if not isinstance(device.device_definition, PublisherDefinition):
+            return
+
+        client_id = device.mqtt_client_name
+
+        # Figure out which operational request topic to use based on PM method
+        if self.method == GlobalDefs.PurposeManagementMethod.PM_1:
+            topics = [GlobalDefs.OR_TOPIC]  # PM_1 uses OR topic
+        else:
+            topics = [GlobalDefs.OSYS_TOPIC]  # PM_2-4 use OSYS topic
+
+        # Publishers also need to subscribe to their own response topic
+        operation_response_topic = f"{GlobalDefs.OP_RESPONSE_TOPIC}/{client_id}"
+        topics.append(operation_response_topic)
+
+        # Subscribe to all operational topics
+        for topic in topics:
+            self.subscribe_lock.acquire()
+
+            results = GlobalDefs.CLIENT_MODULE.subscribe_for_operations(
+                device.mqtt_client, self.method, topic
+            )
+
+            now = time.time()
+
+            # Track subscriptions so we can log them when they complete
+            for result_code, mid, sub_id in results:
+                if result_code == 0:
+                    if device.mqtt_client_name not in self.pending_subscribes:
+                        self.pending_subscribes[device.mqtt_client_name] = {}
+                    self.pending_subscribes[device.mqtt_client_name][mid] = (
+                        topic, GlobalDefs.OP_PURPOSE, sub_id, now
+                    )
+
+            self.subscribe_lock.release()
 
     def _on_subscribe(self, client: mqtt.Client, userdata: Any, mid: Any, reason_code_list: List[ReasonCode], properties : Properties):
         
@@ -611,8 +857,9 @@ class DeterministicTestExecutor():
                         # Log message
                         GlobalDefs.LOGGING_MODULE.log_publish(time, self.my_id, device_instance.mqtt_client_name, corr_data, topic, purpose, op_type)
                     else:
-                        # Log message
-                        GlobalDefs.LOGGING_MODULE.log_operation_publish(time, self.my_id, device_instance.mqtt_client_name, corr_data, topic, purpose, op_type, self.current_config.possible_operations[op_type])
+                        # Log operational message - use self.all_operations which includes C1_REG ops
+                        op_category = self.all_operations.get(op_type, "UNKNOWN")
+                        GlobalDefs.LOGGING_MODULE.log_operation_publish(time, self.my_id, device_instance.mqtt_client_name, corr_data, topic, purpose, op_type, op_category)
                 
                 
     def _on_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):
@@ -645,8 +892,15 @@ class DeterministicTestExecutor():
             else:
                 sub_id.append(-1)
 
-        # Log messages
+        # Log messages based on type
         if operational_message:
-            GlobalDefs.LOGGING_MODULE.log_operation_recv(time.time(), self.my_id, device_instance.mqtt_client_name, sending_client, correlation_data, message.topic, operation_type, self.current_config.possible_operations[operation_type], op_message_type, sub_id[0])
+            op_category = self.current_config.all_operations.get(operation_type, "UNKNOWN")
+            GlobalDefs.LOGGING_MODULE.log_operation_recv(time.time(), self.my_id, device_instance.mqtt_client_name, sending_client, correlation_data, message.topic, operation_type, op_category, op_message_type, sub_id[0])
+
+            # Handle operational requests at publishers - they need to send responses
+            # Only respond if: 1) we're a publisher, 2) there's a response topic, 3) requester is subscribed to our data
+            if isinstance(device_instance.device_definition, PublisherDefinition) and hasattr(message.properties, "ResponseTopic") and message.properties.ResponseTopic:
+                if self._should_publisher_respond(device_instance, sending_client):
+                    self._send_operational_response(device_instance, message.properties.ResponseTopic, operation_type, correlation_data)
         else:
             GlobalDefs.LOGGING_MODULE.log_recv(time.time(), self.my_id, device_instance.mqtt_client_name, sending_client, correlation_data, message.topic, "DATA", sub_id[0])

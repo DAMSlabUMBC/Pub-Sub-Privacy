@@ -1,0 +1,51 @@
+Metric Category,Metric Name,Value
+Broker,CPU Min (%),0.00
+Broker,CPU Max (%),2.14
+Broker,CPU Avg (%),0.40
+Broker,CPU Variance,0.08
+Broker,Memory Min (MB),12.17
+Broker,Memory Max (MB),12.73
+Broker,Memory Avg (MB),12.48
+Broker,Memory Variance,0.02
+Messaging,Latency Min (ms),0.45
+Messaging,Latency Max (ms),3.51
+Messaging,Latency Avg (ms),1.56
+Messaging,Latency Variance,0.43
+Messaging,Throughput (msgs/sec),1.15
+Messaging,Avg Header Size (bytes),49.26
+Messaging,Data Messages,330
+Messaging,Non-Data Messages,285
+Purpose Correctness,Total Subscribers,4
+Purpose Correctness,Total Valid Messages,162
+Purpose Correctness,Total Invalid Messages,168
+Purpose Correctness,Total Expected,162
+Purpose Correctness,Total Received,330
+Purpose Correctness,Avg False Accept Rate,0.1474
+Purpose Correctness,Avg False Reject Rate,0.0000
+DP Correctness,Total Operational Requests,79
+DP Correctness,Total Expected Responses,158
+DP Correctness,Total Actual Responses,136
+DP Correctness,Total Relevant Responses,136
+DP Correctness,Total Irrelevant Responses,0
+DP Correctness,Avg Coverage,0.8608
+DP Correctness,Avg Leakage,0.0000
+DP Correctness,Avg Completion,0.8608
+DP Correctness,Avg Lost,0.1392
+DP C1_REG,Requests,13
+DP C1_REG,Expected Responses,26
+DP C1_REG,Actual Responses,23
+DP C1_REG,Relevant Responses,23
+DP C1_REG,Coverage,0.8846
+DP C1_REG,Leakage,0.0000
+DP C2,Requests,50
+DP C2,Expected Responses,100
+DP C2,Actual Responses,88
+DP C2,Relevant Responses,88
+DP C2,Coverage,0.8800
+DP C2,Leakage,0.0000
+DP C3,Requests,86
+DP C3,Expected Responses,172
+DP C3,Actual Responses,152
+DP C3,Relevant Responses,152
+DP C3,Coverage,0.8837
+DP C3,Leakage,0.0000
