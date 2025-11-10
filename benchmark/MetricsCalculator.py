@@ -389,16 +389,31 @@ class MetricsCalculator:
             # Get all disconnection events for client
             disconnect_events = [e for e in self.disconnect_events if e.client_id == client_id]
             
-            for sub_event in sub_list:              
+            for sub_event in sub_list:       
                 
                 # Find the next disconnection event if there is one
                 post_sub_disconnect_events = [e for e in disconnect_events if e.timestamp >= sub_event.timestamp]
-                
-                if len(post_sub_disconnect_events) == 0:
-                    end_time = sys.float_info.max
-                else:
+
+                next_disconnect_event = None
+                if len(post_sub_disconnect_events) != 0:
                     next_disconnect_event = min(post_sub_disconnect_events, key=lambda e: e.timestamp)
+
+                # Also find sub events for this client and topic after this point
+                same_topic_sub_events = [e for e in self.subscribe_events if e.client_id == client_id and e.topic_filter == sub_event.topic_filter and e.timestamp > sub_event.timestamp]       
+
+                next_sub_event = None
+                if len(same_topic_sub_events) != 0:
+                    next_sub_event = min(same_topic_sub_events, key=lambda e: e.timestamp)
+
+                # Find the next event that overrides this subscription
+                if next_disconnect_event is not None and next_sub_event is not None:
+                    end_time = min(next_disconnect_event.timestamp, next_sub_event.timestamp)
+                elif next_disconnect_event is not None:
                     end_time = next_disconnect_event.timestamp
+                elif next_sub_event is not None:
+                    end_time = next_sub_event.timestamp
+                else:
+                    end_time = sys.float_info.max
                     
                 # Now save
                 sub_event.end_timestamp = end_time
@@ -519,7 +534,7 @@ class MetricsCalculator:
                     
                     if topic_matched and purpose_matched and time_valid:
                         metrics.valid_recv_count += 1
-                    elif topic_matched and not purpose_matched or not time_valid:
+                    elif time_valid and topic_matched and not purpose_matched:
                         metrics.invalid_recv_count += 1
 
             # Calculate expected message count
