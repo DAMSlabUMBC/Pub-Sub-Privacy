@@ -1,9 +1,10 @@
 #!/bin/bash
-# Runs a benchmark test and calculates the metrics automatically
+# Runs a single test WITHOUT analyzing the logs
+# Analysis happens later in parallel so we don't waste time waiting
 
 set -e
 
-# Make sure we got the right args
+# Make sure we got what we need
 if [ "$#" -lt 2 ]; then
     echo "Usage: $0 <config_file> <broker_address> [broker_port]"
     echo "Example: $0 configs/config-new.cfg localhost 1883"
@@ -14,10 +15,12 @@ CONFIG_FILE="$1"
 BROKER_ADDRESS="$2"
 BROKER_PORT="${3:-1883}"
 
-# Start up the venv
-source venv/bin/activate
+# Start up venv if we're not in Docker
+if [ -f "venv/bin/activate" ]; then
+    source venv/bin/activate
+fi
 
-# Pull out the config name so we can use it for naming stuff
+# Grab the config name for the log files
 CONFIG_NAME=$(basename "$CONFIG_FILE" .cfg)
 
 echo "================================================================================"
@@ -39,23 +42,5 @@ echo ""
 echo "================================================================================"
 echo "Test complete! Log file: $LOG_FILE"
 echo "================================================================================"
-echo ""
-echo "Calculating metrics..."
-echo ""
-
-# Make the results dir if it doesn't exist yet
-mkdir -p results
-
-# Run the metrics calculation
-RESULTS_CSV="results/${CONFIG_NAME}_$(date +%Y-%m-%d_%H-%M-%S)_metrics.csv"
-python3 benchmark/calculate_metrics.py "$LOG_FILE" \
-    --test-name "$CONFIG_NAME" \
-    --csv-output "$RESULTS_CSV"
-
-echo ""
-echo "================================================================================"
-echo "DONE!"
-echo "================================================================================"
-echo "Log file:     $LOG_FILE"
-echo "Metrics CSV:  $RESULTS_CSV"
+echo "Log file saved for later analysis: $LOG_FILE"
 echo "================================================================================"
