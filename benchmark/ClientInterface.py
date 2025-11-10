@@ -157,8 +157,8 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
                 
             # Unsubscribe from each topic
             for topic in old_topic_list:
-                properties = mqtt.Properties(packetType=mqtt.PacketTypes.UNSUBSCRIBE)
-                result, mid = client.unsubscribe(topic, properties=properties)
+                unsub_properties = mqtt.Properties(packetType=mqtt.PacketTypes.UNSUBSCRIBE)
+                result, mid = client.unsubscribe(topic, properties=unsub_properties)
 
         # Now find new purposes
         described_purposes = GlobalDefs.find_described_purposes(purpose_filter)
@@ -183,12 +183,13 @@ def subscribe_with_purpose_filter(client: mqtt.Client, method: GlobalDefs.Purpos
     elif method == GlobalDefs.PurposeManagementMethod.PM_2 or method == GlobalDefs.PurposeManagementMethod.PM_3:
         
         # Purpose filter is supplied on subscription
-        # Not that we don't have to unsubscribe old subscriptions since the broker handles this by definition
         properties = mqtt.Properties(packetType=mqtt.PacketTypes.SUBSCRIBE)
         properties.UserProperty = (GlobalDefs.PROPERTY_SP, purpose_filter)
         properties.SubscriptionIdentifier = SUBSCRIPTION_ID_COUNTER
         
         try:
+            unsub_properties = mqtt.Properties(packetType=mqtt.PacketTypes.UNSUBSCRIBE)
+            client.unsubscribe(topic_filter, properties=unsub_properties)
             result, mid = client.subscribe(topic_filter, properties=properties, options=subscribe_options)
             return_list.append((result, mid, SUBSCRIPTION_ID_COUNTER))
         except Exception as e:
