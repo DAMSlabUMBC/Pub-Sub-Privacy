@@ -1,14 +1,29 @@
 import statistics
+import sys
+from paho.mqtt.client import topic_matches_sub
 from dataclasses import dataclass, field
-from typing import Dict, List, Set, Optional, Tuple
+from typing import Dict, List, Set, Optional, Tuple, Any
 from pathlib import Path
 import GlobalDefs
 from LoggingModule import (
-    SEPARATOR, SEED_LABEL, PM_METHOD_LABEL, CPU_METRICS_LABEL, MEM_METRICS_LABEL,
-    CONNECT_LABEL, DISCONNECT_LABEL, SUBSCRIBE_LABEL, PUBLISH_LABEL,
-    OP_PUBLISH_LABEL, RECV_LABEL, OP_RECV_LABEL
+    SEPARATOR, PM_METHOD_LABEL, CPU_METRICS_LABEL, MEM_METRICS_LABEL,
+    CONNECT_LABEL, DISCONNECT_LABEL, SUBSCRIBE_LABEL, OP_SUBSCRIBE_LABEL, PUBLISH_LABEL,
+    OP_PUBLISH_LABEL, RECV_LABEL, OP_RECV_LABEL, OP_RESP_RECV_LABEL
 )
 
+@dataclass
+class ConnectEvent:
+    """Client connection event"""
+    timestamp: float
+    benchmark_id: str
+    client_id: str
+    
+@dataclass
+class DisconnectEvent:
+    """Client disconnection event"""
+    timestamp: float
+    benchmark_id: str
+    client_id: str
 
 @dataclass
 class PublishEvent:
@@ -39,6 +54,17 @@ class RecvEvent:
 class SubscribeEvent:
     """Subscription event"""
     timestamp: float
+    end_timestamp: float
+    benchmark_id: str
+    client_id: str
+    topic_filter: str
+    purpose_filter: str
+    sub_id: str
+    
+@dataclass
+class OperationSubscribeEvent:
+    """Operations subscription event"""
+    timestamp: float
     benchmark_id: str
     client_id: str
     topic_filter: str
@@ -62,6 +88,20 @@ class OperationPublishEvent:
 @dataclass
 class OperationRecvEvent:
     """Operational message reception event"""
+    timestamp: float
+    benchmark_id: str
+    recv_client_id: str
+    sending_client_id: str
+    topic: str
+    sub_id: str
+    op_type: str
+    op_category: str
+    op_status: str
+    corr_data: int
+
+@dataclass
+class OperationRespRecvEvent:
+    """Operational message response reception event"""
     timestamp: float
     benchmark_id: str
     recv_client_id: str
@@ -107,24 +147,25 @@ class SubscriberPurposeCorrectness:
     valid_recv_count: int = 0
     invalid_recv_count: int = 0
     expected_msg_count: int = 0
+    bad_reject: int = 0
     total_recv_count: int = 0
     false_accept: float = 0.0
     false_reject: float = 0.0
 
 
 @dataclass
-class DPCorrectnessMetrics:
-    """DP correctness per request"""
-    request_id: str
+class OPCorrectnessMetrics:
+    """OP correctness per request"""
     expected_responses: int = 0
     actual_responses: int = 0
-    relevant_responses: int = 0
-    irrelevant_responses: int = 0
+    relevant_recv: int = 0
+    irrelevant_recv: int = 0
+    relevant_subs: int = 0
+    irrelevant_subs: int = 0
     all_subscribers: int = 0
     coverage: float = 0.0
     leakage: float = 0.0
     completion: float = 0.0
-    lost: float = 0.0
 
 
 @dataclass
@@ -135,24 +176,44 @@ class TestMetrics:
     broker_stats: BrokerStats = field(default_factory=BrokerStats)
     messaging_stats: MessagingStats = field(default_factory=MessagingStats)
     purpose_correctness_per_sub: Dict[str, SubscriberPurposeCorrectness] = field(default_factory=dict)
-    dp_correctness: Dict[str, DPCorrectnessMetrics] = field(default_factory=dict)
+    op_correctness: List[OPCorrectnessMetrics] = field(default_factory=list)
 
 
 class MetricsCalculator:
     """Calculate metrics from test logs"""
+    
+    connect_events: List[ConnectEvent]
+    disconnect_events: List[DisconnectEvent]
+    publish_events: List[PublishEvent]
+    recv_events: List[RecvEvent]
+    subscribe_events: List[SubscribeEvent]
+    op_subscribe_events: List[OperationSubscribeEvent]
+    op_publish_events: List[OperationPublishEvent]
+    op_recv_events: List[OperationRecvEvent]
+    op_resp_recv_events: List[OperationRespRecvEvent]
+    
+    client_subscription_periods: Dict[str, Dict[str, List[Tuple[float, float | None]]]] # Map of clients -> topic:purpose -> valid ranges of time
+
+    pm_method: Optional[str] = None
+    cpu_metrics: Optional[Tuple[float, float, float, float]] = None
+    mem_metrics: Optional[Tuple[float, float, float, float]] = None
+
+    subscriber_subscriptions: Dict[str, List[SubscribeEvent]]
 
     def __init__(self):
-        self.publish_events: List[PublishEvent] = []
-        self.recv_events: List[RecvEvent] = []
-        self.subscribe_events: List[SubscribeEvent] = []
-        self.op_publish_events: List[OperationPublishEvent] = []
-        self.op_recv_events: List[OperationRecvEvent] = []
+        self.connect_events = []
+        self.disconnect_events = []
+        self.publish_events = []
+        self.recv_events = []
+        self.subscribe_events = []
+        self.op_subscribe_events = []
+        self.op_publish_events = []
+        self.op_recv_events = []
+        self.op_resp_recv_events = []
+        
+        self.client_subscription_periods = {}
 
-        self.pm_method: Optional[str] = None
-        self.cpu_metrics: Optional[Tuple[float, float, float, float]] = None
-        self.mem_metrics: Optional[Tuple[float, float, float, float]] = None
-
-        self.subscriber_subscriptions: Dict[str, List[SubscribeEvent]] = {}
+        self.subscriber_subscriptions = {}
 
     def parse_log_file(self, log_file_path: str) -> bool:
         """Parse log file and extract events"""
@@ -172,6 +233,7 @@ class MetricsCalculator:
                     continue
 
                 label = parts[0]
+                event: Any
 
                 try:
                     if label == PM_METHOD_LABEL:
@@ -192,6 +254,24 @@ class MetricsCalculator:
                             float(parts[3]),  # avg
                             float(parts[4])   # variance
                         )
+                        
+                    elif label == CONNECT_LABEL:
+                        # CONNECT@@timestamp@@benchmark_id@@client_id
+                        event = ConnectEvent(
+                            timestamp=float(parts[1]),
+                            benchmark_id=parts[2],
+                            client_id=parts[3]
+                        )
+                        self.connect_events.append(event)
+                        
+                    elif label == DISCONNECT_LABEL:
+                        # DISCONNECT@@timestamp@@benchmark_id@@client_id
+                        event = DisconnectEvent(
+                            timestamp=float(parts[1]),
+                            benchmark_id=parts[2],
+                            client_id=parts[3]
+                        )
+                        self.disconnect_events.append(event)
 
                     elif label == PUBLISH_LABEL:
                         # PUBLISH@@timestamp@@benchmark_id@@client_id@@topic@@purpose@@msg_type@@corr_data
@@ -224,6 +304,7 @@ class MetricsCalculator:
                         # SUBSCRIBE@@timestamp@@benchmark_id@@client_id@@topic_filter@@purpose_filter@@sub_id
                         event = SubscribeEvent(
                             timestamp=float(parts[1]),
+                            end_timestamp=sys.float_info.max,
                             benchmark_id=parts[2],
                             client_id=parts[3],
                             topic_filter=parts[4],
@@ -236,6 +317,18 @@ class MetricsCalculator:
                         if event.client_id not in self.subscriber_subscriptions:
                             self.subscriber_subscriptions[event.client_id] = []
                         self.subscriber_subscriptions[event.client_id].append(event)
+                        
+                    elif label == OP_SUBSCRIBE_LABEL:
+                        # SUBSCRIBE_OP@@timestamp@@benchmark_id@@client_id@@topic_filter@@purpose_filter@@sub_id
+                        event = OperationSubscribeEvent(
+                            timestamp=float(parts[1]),
+                            benchmark_id=parts[2],
+                            client_id=parts[3],
+                            topic_filter=parts[4],
+                            purpose_filter=parts[5],
+                            sub_id=parts[6]
+                        )
+                        self.op_subscribe_events.append(event)
 
                     elif label == OP_PUBLISH_LABEL:
                         # PUBLISH_OP@@timestamp@@benchmark_id@@client_id@@topic@@purpose@@op_type@@op_category@@corr_data
@@ -266,6 +359,22 @@ class MetricsCalculator:
                             corr_data=int(parts[10])
                         )
                         self.op_recv_events.append(event)
+                        
+                    elif label == OP_RESP_RECV_LABEL:
+                        # RECV_OP_RESP@@timestamp@@benchmark_id@@recv_client@@sending_client@@topic@@sub_id@@op_type@@op_category@@op_status@@corr_data
+                        event = OperationRespRecvEvent(
+                            timestamp=float(parts[1]),
+                            benchmark_id=parts[2],
+                            recv_client_id=parts[3],
+                            sending_client_id=parts[4],
+                            topic=parts[5],
+                            sub_id=parts[6],
+                            op_type=parts[7],
+                            op_category=parts[8],
+                            op_status=parts[9],
+                            corr_data=int(parts[10])
+                        )
+                        self.op_resp_recv_events.append(event)
 
                 except (IndexError, ValueError) as e:
                     print(f"Error parsing line: {line}")
@@ -273,6 +382,26 @@ class MetricsCalculator:
                     continue
 
         return True
+    
+    def _parse_subscription_periods(self) -> None:        
+        for client_id, sub_list in self.subscriber_subscriptions.items():
+            
+            # Get all disconnection events for client
+            disconnect_events = [e for e in self.disconnect_events if e.client_id == client_id]
+            
+            for sub_event in sub_list:              
+                
+                # Find the next disconnection event if there is one
+                post_sub_disconnect_events = [e for e in disconnect_events if e.timestamp >= sub_event.timestamp]
+                
+                if len(post_sub_disconnect_events) == 0:
+                    end_time = sys.float_info.max
+                else:
+                    next_disconnect_event = min(post_sub_disconnect_events, key=lambda e: e.timestamp)
+                    end_time = next_disconnect_event.timestamp
+                    
+                # Now save
+                sub_event.end_timestamp = end_time
 
     def calculate_broker_stats(self) -> BrokerStats:
         """Calculate broker resource usage"""
@@ -321,13 +450,13 @@ class MetricsCalculator:
                 stats.latency_variance_ms = statistics.variance(latencies)
 
         # Calculate throughput
-        stats.total_data_msg_count = len(self.publish_events)
-        if self.publish_events:
+        stats.total_data_msg_count = len(self.recv_events)
+        if self.recv_events:
             test_duration_s = (
-                self.publish_events[-1].timestamp - self.publish_events[0].timestamp
+                self.recv_events[-1].timestamp - self.recv_events[0].timestamp
             )
             if test_duration_s > 0:
-                stats.throughput_msgs_per_sec = len(self.publish_events) / test_duration_s
+                stats.throughput_msgs_per_sec = len(self.recv_events) / test_duration_s
 
         # Count non-data messages
         stats.non_data_msg_count = len(self.op_publish_events)
@@ -382,24 +511,47 @@ class MetricsCalculator:
 
                 pub_event = matching_pubs[0]
 
-                # Check if this message's purpose matches any of the subscriber's filters
-                is_valid = False
+                # Check if this message's purpose matches any of the subscriber's filters during the subscription time
                 for sub in subscriptions:
-                    if GlobalDefs.purpose_described_by_filter(pub_event.purpose, sub.purpose_filter):
-                        is_valid = True
-                        break
-
-                if is_valid:
-                    metrics.valid_recv_count += 1
-                else:
-                    metrics.invalid_recv_count += 1
+                    topic_matched = topic_matches_sub(sub.topic_filter, pub_event.topic)
+                    purpose_matched = GlobalDefs.purpose_described_by_filter(pub_event.purpose, sub.purpose_filter)
+                    time_valid = (recv_event.timestamp >= sub.timestamp and (sub.end_timestamp is None or recv_event.timestamp <= sub.end_timestamp))
+                    
+                    if topic_matched and purpose_matched and time_valid:
+                        metrics.valid_recv_count += 1
+                    elif topic_matched and not purpose_matched or not time_valid:
+                        metrics.invalid_recv_count += 1
 
             # Calculate expected message count
-            # This requires knowing which messages should have been received
-            # For now, use valid_recv_count as minimum expectation
-            # A more sophisticated approach would require test configuration
-            metrics.expected_msg_count = metrics.valid_recv_count
-
+            # For this, we need to check all messages sent, and see if there was a valid subscription
+            # during this time. This is similar to above, but we care about pub events not recv events
+            for pub_event in self.publish_events:
+                
+                # Get recv events that match this pub for later
+                recv_events_for_pub = [e for e in subscriber_recvs 
+                                        if e.corr_data == pub_event.corr_data
+                                        and e.sending_client_id == pub_event.client_id
+                                        and e.topic == pub_event.topic]
+                
+                # Check if we have a subscription for this message with compatible purposes and the relevant time
+                matched_subs = 0
+                for sub in subscriptions:
+                    
+                    topic_matched = topic_matches_sub(sub.topic_filter, pub_event.topic)
+                    purpose_matched = GlobalDefs.purpose_described_by_filter(pub_event.purpose, sub.purpose_filter)
+                    time_valid = (pub_event.timestamp >= sub.timestamp and (sub.end_timestamp is None or pub_event.timestamp <= sub.end_timestamp))
+                    
+                    if topic_matched and purpose_matched and time_valid:
+                        matched_subs += 1
+                        
+                        
+                if matched_subs > 0:
+                    metrics.expected_msg_count += matched_subs
+                    actual_received = len(recv_events_for_pub)    
+                    
+                    if actual_received < matched_subs:
+                        metrics.bad_reject += (actual_received - matched_subs)               
+            
             # Calculate false accept and false reject
             if metrics.total_recv_count > 0:
                 metrics.false_accept = metrics.invalid_recv_count / metrics.total_recv_count
@@ -407,7 +559,7 @@ class MetricsCalculator:
                 metrics.false_accept = 0.0
 
             if metrics.expected_msg_count > 0:
-                metrics.false_reject = 1.0 - (metrics.valid_recv_count / metrics.expected_msg_count)
+                metrics.false_reject = metrics.bad_reject / metrics.expected_msg_count
             else:
                 metrics.false_reject = 0.0
 
@@ -415,79 +567,121 @@ class MetricsCalculator:
 
         return results
 
-    def calculate_dp_correctness(self) -> Dict[str, DPCorrectnessMetrics]:
-        """Calculate DP correctness per request"""
-        results: Dict[str, DPCorrectnessMetrics] = {}
+    def calculate_op_correctness(self) -> List[OPCorrectnessMetrics]:
+        """Calculate OP correctness per request"""
+        results: List[OPCorrectnessMetrics] = []
 
         # Group operation requests by correlation data (request ID)
         request_pubs: Dict[int, OperationPublishEvent] = {}
         for op_pub in self.op_publish_events:
             request_pubs[op_pub.corr_data] = op_pub
-
-        # For each request, calculate correctness metrics
-        for corr_data, req_pub in request_pubs.items():
-            request_id = f"req_{corr_data}"
-            metrics = DPCorrectnessMetrics(request_id=request_id)
-
-            # Find all responses to this request
-            # NOTE: Filter for op_resp topics to get actual responses, not the original requests
-            # Had a bug here before where I was counting RECV_OP events instead of response publishes
-            responses = [
-                op_pub for op_pub in self.op_publish_events
-                if op_pub.corr_data == corr_data and 'op_resp' in op_pub.topic
-            ]
-
-            metrics.actual_responses = len(responses)
-
-            # Determine relevant vs irrelevant responses
-            # Relevant responses have matching purpose filters
-            for resp in responses:
-                # Check if responder (publisher) should have data for the requester
-                resp_client = resp.client_id
-                if resp_client in self.subscriber_subscriptions:
-                    subs = self.subscriber_subscriptions[resp_client]
-                    is_relevant = any(
-                        GlobalDefs.purpose_described_by_filter(req_pub.purpose, sub.purpose_filter)
-                        for sub in subs
-                    )
-
-                    if is_relevant:
-                        metrics.relevant_responses += 1
-                    else:
-                        metrics.irrelevant_responses += 1
-                else:
-                    # If responder is not in subscriptions, it's likely a publisher
-                    # All publisher responses are considered relevant for now
-                    metrics.relevant_responses += 1
-
+            
+            metrics = OPCorrectnessMetrics()
+            
             # Count all subscribers
             metrics.all_subscribers = len(self.subscriber_subscriptions)
+            
+            # Check which subscribers recieved the op
+            op_reqs_recv = [e for e in self.op_recv_events 
+                            if op_pub.client_id == e.sending_client_id
+                            and op_pub.op_type == e.op_type
+                            and op_pub.corr_data == e.corr_data]
+            
+            # Check which responses were recieved for this op
+            op_resp_recv = [e for e in self.op_resp_recv_events 
+                            if op_pub.client_id == e.recv_client_id
+                            and op_pub.op_type == e.op_type
+                            and op_pub.corr_data == e.corr_data
+                            and e.sending_client_id != "Broker"]
+            
+            # Check if the broker responded
+            op_resp_from_broker = [e for e in self.op_resp_recv_events 
+                                    if op_pub.client_id == e.recv_client_id
+                                    and op_pub.op_type == e.op_type
+                                    and op_pub.corr_data == e.corr_data
+                                    and e.sending_client_id == "Broker"]
 
-            # Expected responses = subscribers with matching purpose filter
-            metrics.expected_responses = 0
-            for subscriber_id, subs in self.subscriber_subscriptions.items():
-                for sub in subs:
-                    if GlobalDefs.purpose_described_by_filter(req_pub.purpose, sub.purpose_filter):
-                        metrics.expected_responses += 1
+            # Determine relevant vs irrelevant requests
+            
+            # We first need to see every message this client sent on which topics and purposes
+            pubs_by_client = [e for e in self.publish_events if e.client_id == op_pub.client_id]
+            
+            # Find subscribers that should respond
+            relevant_sub_clients = list()
+            for pub in pubs_by_client:
+                
+                for subscriber_id, subs in self.subscriber_subscriptions.items():
+                    
+                    # Don't run this if we already have this subscriber
+                    if subscriber_id in relevant_sub_clients:
+                        continue
+                    
+                    found = False      
+                    for sub in subs:
+                        
+                        topic_matched = topic_matches_sub(sub.topic_filter, pub.topic)
+                        purpose_matched = GlobalDefs.purpose_described_by_filter(pub.purpose, sub.purpose_filter)
+                        time_valid = (pub.timestamp >= sub.timestamp and (sub.end_timestamp is None or pub.timestamp <= sub.end_timestamp))
+                        
+                        if topic_matched and purpose_matched and time_valid:
+                            found = True
+                            break
+                        
+                    if found:
+                        relevant_sub_clients.append(subscriber_id)
+                        
+            metrics.relevant_subs = len(relevant_sub_clients)
+            metrics.irrelevant_subs = (metrics.all_subscribers - len(relevant_sub_clients))    
+            
+            # Now for every recv, see if subscriber was relevant
+            for req_recv in op_reqs_recv:
+                if req_recv.recv_client_id in relevant_sub_clients:
+                    metrics.relevant_recv += 1
+                else:
+                    metrics.irrelevant_recv += 1
+                    
+            if metrics.relevant_recv < metrics.relevant_subs and op_pub.op_category == 'C1':
+                
+                # For C1 ops alone, it's possible only the broker will respond
+                if len(op_resp_from_broker) > 0:
+                    
+                    # In this case alone, we treat this as 100% response
+                    metrics.relevant_subs = len(op_resp_from_broker)
+                    metrics.relevant_recv = len(op_resp_from_broker)
+
+            # Completion: Did every subscriber who recieved send a response
+            for req_recv in op_reqs_recv:
+                metrics.expected_responses += 1
+                
+                # Check for matching response
+                found = False
+                for resp_recv in op_resp_recv:             
+                    if resp_recv.sending_client_id == req_recv.recv_client_id:
+                        found = True
                         break
+                
+                if found:
+                    metrics.actual_responses += 1
 
             # Calculate derived metrics
-            if metrics.expected_responses > 0:
-                metrics.coverage = metrics.relevant_responses / metrics.expected_responses
-                metrics.completion = metrics.relevant_responses / metrics.expected_responses
-                metrics.lost = 1.0 - metrics.completion
-            else:
-                metrics.coverage = 0.0
-                metrics.completion = 0.0
-                metrics.lost = 1.0
+            if metrics.expected_responses > 0 or metrics.relevant_subs > 0:
+                
+                if metrics.relevant_subs != 0:
+                    metrics.coverage = metrics.relevant_recv / metrics.relevant_subs
+                else:
+                    metrics.coverage = 1.0
+                    
+                if metrics.irrelevant_subs != 0:    
+                    metrics.leakage = metrics.irrelevant_recv / metrics.irrelevant_subs
+                else:
+                    metrics.leakage = 0.0
+                    
+                if metrics.expected_responses != 0:    
+                    metrics.completion = metrics.actual_responses / metrics.expected_responses
+                else:
+                    metrics.completion = 1.0
 
-            non_expected_subs = metrics.all_subscribers - metrics.expected_responses
-            if non_expected_subs > 0:
-                metrics.leakage = metrics.irrelevant_responses / non_expected_subs
-            else:
-                metrics.leakage = 0.0
-
-            results[request_id] = metrics
+                results.append(metrics)
 
         return results
 
@@ -495,6 +689,10 @@ class MetricsCalculator:
         """Calculate all metrics"""
         if not self.parse_log_file(log_file_path):
             return None
+        
+        # Need to determine the ranges for which clients were subscribed to topics for purposes to
+        # make sure we don't count a miss for a subscriber that wasn't active
+        self._parse_subscription_periods()
 
         metrics = TestMetrics(
             test_name=test_name,
@@ -504,7 +702,7 @@ class MetricsCalculator:
         metrics.broker_stats = self.calculate_broker_stats()
         metrics.messaging_stats = self.calculate_messaging_stats()
         metrics.purpose_correctness_per_sub = self.calculate_purpose_correctness()
-        metrics.dp_correctness = self.calculate_dp_correctness()
+        metrics.op_correctness = self.calculate_op_correctness()
 
         return metrics
 
@@ -518,25 +716,25 @@ class MetricsCalculator:
         # Broker Stats
         print(f"\n--- Broker Statistics ---")
         print(f"CPU Usage:")
-        print(f"  Min:      {metrics.broker_stats.cpu_min:.2f}%")
-        print(f"  Max:      {metrics.broker_stats.cpu_max:.2f}%")
-        print(f"  Average:  {metrics.broker_stats.cpu_avg:.2f}%")
-        print(f"  Variance: {metrics.broker_stats.cpu_variance:.2f}")
+        print(f"  Min:      {metrics.broker_stats.cpu_min:.5f}%")
+        print(f"  Max:      {metrics.broker_stats.cpu_max:.5f}%")
+        print(f"  Average:  {metrics.broker_stats.cpu_avg:.5f}%")
+        print(f"  Variance: {metrics.broker_stats.cpu_variance:.5f}")
         print(f"\nMemory Usage:")
-        print(f"  Min:      {metrics.broker_stats.mem_min:.2f} MB")
-        print(f"  Max:      {metrics.broker_stats.mem_max:.2f} MB")
-        print(f"  Average:  {metrics.broker_stats.mem_avg:.2f} MB")
-        print(f"  Variance: {metrics.broker_stats.mem_variance:.2f}")
+        print(f"  Min:      {metrics.broker_stats.mem_min:.5f} MB")
+        print(f"  Max:      {metrics.broker_stats.mem_max:.5f} MB")
+        print(f"  Average:  {metrics.broker_stats.mem_avg:.5f} MB")
+        print(f"  Variance: {metrics.broker_stats.mem_variance:.5f}")
 
         # Messaging Stats
         print(f"\n--- Messaging Statistics ---")
         print(f"Latency:")
-        print(f"  Min:      {metrics.messaging_stats.latency_min_ms:.2f} ms")
-        print(f"  Max:      {metrics.messaging_stats.latency_max_ms:.2f} ms")
-        print(f"  Average:  {metrics.messaging_stats.latency_avg_ms:.2f} ms")
-        print(f"  Variance: {metrics.messaging_stats.latency_variance_ms:.2f}")
-        print(f"\nThroughput: {metrics.messaging_stats.throughput_msgs_per_sec:.2f} msgs/sec")
-        print(f"Average Header Size: {metrics.messaging_stats.avg_header_size_bytes:.2f} bytes")
+        print(f"  Min:      {metrics.messaging_stats.latency_min_ms:.5f} ms")
+        print(f"  Max:      {metrics.messaging_stats.latency_max_ms:.5f} ms")
+        print(f"  Average:  {metrics.messaging_stats.latency_avg_ms:.5f} ms")
+        print(f"  Variance: {metrics.messaging_stats.latency_variance_ms:.5f}")
+        print(f"\nThroughput: {metrics.messaging_stats.throughput_msgs_per_sec:.5f} msgs/sec")
+        print(f"Average Header Size: {metrics.messaging_stats.avg_header_size_bytes:.5f} bytes")
         print(f"Data Messages: {metrics.messaging_stats.total_data_msg_count}")
         print(f"Non-Data Messages: {metrics.messaging_stats.non_data_msg_count}")
 
@@ -548,6 +746,7 @@ class MetricsCalculator:
             total_invalid = sum(pc.invalid_recv_count for pc in metrics.purpose_correctness_per_sub.values())
             total_expected = sum(pc.expected_msg_count for pc in metrics.purpose_correctness_per_sub.values())
             total_received = sum(pc.total_recv_count for pc in metrics.purpose_correctness_per_sub.values())
+            total_rejected = sum(pc.bad_reject for pc in metrics.purpose_correctness_per_sub.values())
             avg_false_accept = sum(pc.false_accept for pc in metrics.purpose_correctness_per_sub.values()) / total_subs
             avg_false_reject = sum(pc.false_reject for pc in metrics.purpose_correctness_per_sub.values()) / total_subs
 
@@ -556,41 +755,40 @@ class MetricsCalculator:
             print(f"Total Invalid Messages:  {total_invalid}")
             print(f"Total Expected:          {total_expected}")
             print(f"Total Received:          {total_received}")
-            print(f"Avg False Accept Rate:   {avg_false_accept:.4f} ({avg_false_accept*100:.2f}%)")
-            print(f"Avg False Reject Rate:   {avg_false_reject:.4f} ({avg_false_reject*100:.2f}%)")
+            print(f"Total Rejected:          {total_rejected}")
+            print(f"Avg False Accept Rate:   {avg_false_accept:.4f} ({avg_false_accept*100:.5f}%)")
+            print(f"Avg False Reject Rate:   {avg_false_reject:.4f} ({avg_false_reject*100:.5f}%)")
         else:
             print("No purpose correctness data available")
 
-        # DP Correctness Summary
-        if metrics.dp_correctness:
-            print(f"\n--- DP Correctness Summary ---")
-            total_requests = len(metrics.dp_correctness)
-            total_expected_resp = sum(dp.expected_responses for dp in metrics.dp_correctness.values())
-            total_actual_resp = sum(dp.actual_responses for dp in metrics.dp_correctness.values())
-            total_relevant_resp = sum(dp.relevant_responses for dp in metrics.dp_correctness.values())
-            total_irrelevant_resp = sum(dp.irrelevant_responses for dp in metrics.dp_correctness.values())
-            avg_coverage = sum(dp.coverage for dp in metrics.dp_correctness.values()) / total_requests
-            avg_leakage = sum(dp.leakage for dp in metrics.dp_correctness.values()) / total_requests
-            avg_completion = sum(dp.completion for dp in metrics.dp_correctness.values()) / total_requests
-            avg_lost = sum(dp.lost for dp in metrics.dp_correctness.values()) / total_requests
+        # OP Correctness Summary
+        if metrics.op_correctness:
+            print(f"\n--- OP Correctness Summary ---")
+            total_requests = len(metrics.op_correctness)
+            total_expected_resp = sum(op.expected_responses for op in metrics.op_correctness)
+            total_actual_resp = sum(op.actual_responses for op in metrics.op_correctness)
+            total_relevant_req_recv = sum(op.relevant_recv for op in metrics.op_correctness)
+            total_irrelevant_req_recv = sum(op.irrelevant_recv for op in metrics.op_correctness)
+            avg_coverage = sum(op.coverage for op in metrics.op_correctness) / total_requests
+            avg_leakage = sum(op.leakage for op in metrics.op_correctness) / total_requests
+            avg_completion = sum(op.completion for op in metrics.op_correctness) / total_requests
 
-            print(f"Total Operational Requests: {total_requests}")
-            print(f"Total Expected Responses:   {total_expected_resp}")
-            print(f"Total Actual Responses:     {total_actual_resp}")
-            print(f"Total Relevant Responses:   {total_relevant_resp}")
-            print(f"Total Irrelevant Responses: {total_irrelevant_resp}")
-            print(f"Avg Coverage:               {avg_coverage:.4f} ({avg_coverage*100:.2f}%)")
-            print(f"Avg Leakage:                {avg_leakage:.4f} ({avg_leakage*100:.2f}%)")
-            print(f"Avg Completion:             {avg_completion:.4f} ({avg_completion*100:.2f}%)")
-            print(f"Avg Lost:                   {avg_lost:.4f} ({avg_lost*100:.2f}%)")
+            print(f"Total Operational Requests:         {total_requests}")
+            print(f"Total Expected Responses:           {total_expected_resp}")
+            print(f"Total Actual Responses:             {total_actual_resp}")
+            print(f"Total Relevant Requests Recieved:   {total_relevant_req_recv}")
+            print(f"Total Irrelevant Requests Recieved: {total_irrelevant_req_recv}")
+            print(f"Avg Coverage:                       {avg_coverage:.4f} ({avg_coverage*100:.5f}%)")
+            print(f"Avg Leakage:                        {avg_leakage:.4f} ({avg_leakage*100:.5f}%)")
+            print(f"Avg Completion:                     {avg_completion:.4f} ({avg_completion*100:.5f}%)")
 
             # Show the breakdown by category (C1_REG, C2, C3) to see what's going on
-            self._print_dp_by_category(metrics)
+            #self._print_op_by_category(metrics)
 
         print(f"\n{'='*80}\n")
 
-    def _get_dp_category_stats(self, metrics: TestMetrics) -> dict:
-        """Break down DP correctness by operation category (C1_REG, C2, C3)
+    def _get_op_category_stats(self, metrics: TestMetrics) -> dict:
+        """Break down OP correctness by operation category (C1_REG, C2, C3)
 
         Basically just groups all the operational requests by category and adds up
         the metrics for each one. Makes it easier to see which types have issues.
@@ -616,27 +814,27 @@ class MetricsCalculator:
 
             # Grab the metrics for this specific request
             req_id = f"req_{op_pub.corr_data}"
-            if req_id in metrics.dp_correctness:
-                dp_metrics = metrics.dp_correctness[req_id]
-                category_stats[category]['expected'] += dp_metrics.expected_responses
-                category_stats[category]['actual'] += dp_metrics.actual_responses
-                category_stats[category]['relevant'] += dp_metrics.relevant_responses
-                category_stats[category]['irrelevant'] += dp_metrics.irrelevant_responses
+            if req_id in metrics.op_correctness:
+                op_metrics = metrics.op_correctness[req_id]
+                category_stats[category]['expected'] += op_metrics.expected_responses
+                category_stats[category]['actual'] += op_metrics.actual_responses
+                category_stats[category]['relevant'] += op_metrics.relevant_responses
+                category_stats[category]['irrelevant'] += op_metrics.irrelevant_responses
 
         return category_stats
 
-    def _print_dp_by_category(self, metrics: TestMetrics):
-        """Print DP correctness breakdown by category
+    def _print_op_by_category(self, metrics: TestMetrics):
+        """Print OP correctness breakdown by category
 
         Shows each operation category (C1_REG, C2, C3) separately so I can
         see which types are having coverage problems.
         """
-        if not metrics.dp_correctness:
+        if not metrics.op_correctness:
             return
 
-        category_stats = self._get_dp_category_stats(metrics)
+        category_stats = self._get_op_category_stats(metrics)
 
-        print(f"\n--- DP Correctness by Operation Category ---")
+        print(f"\n--- OP Correctness by Operation Category ---")
         for category in sorted(category_stats.keys()):
             stats = category_stats[category]
             if stats['requests'] == 0:
@@ -651,19 +849,19 @@ class MetricsCalculator:
             print(f"  Expected Responses:  {stats['expected']}")
             print(f"  Actual Responses:    {stats['actual']}")
             print(f"  Relevant Responses:  {stats['relevant']}")
-            print(f"  Coverage:            {coverage:.2f}%")
-            print(f"  Leakage:             {leakage:.2f}%")
+            print(f"  Coverage:            {coverage:.5f}%")
+            print(f"  Leakage:             {leakage:.5f}%")
 
-    def _export_dp_by_category_to_csv(self, writer, metrics: TestMetrics):
-        """Export DP correctness breakdown by category to CSV
+    def _export_op_by_category_to_csv(self, writer, metrics: TestMetrics):
+        """Export OP correctness breakdown by category to CSV
 
         Writes a row for each category with all the stats so I can look at them
         in Excel or whatever.
         """
-        if not metrics.dp_correctness:
+        if not metrics.op_correctness:
             return
 
-        category_stats = self._get_dp_category_stats(metrics)
+        category_stats = self._get_op_category_stats(metrics)
 
         # Write out each category's metrics
         for category in sorted(category_stats.keys()):
@@ -675,12 +873,12 @@ class MetricsCalculator:
             leakage = (stats['irrelevant'] / max(1, stats['expected']))
 
             # Write all the stats for this category
-            writer.writerow([f"DP {category}", "Requests", f"{stats['requests']}"])
-            writer.writerow([f"DP {category}", "Expected Responses", f"{stats['expected']}"])
-            writer.writerow([f"DP {category}", "Actual Responses", f"{stats['actual']}"])
-            writer.writerow([f"DP {category}", "Relevant Responses", f"{stats['relevant']}"])
-            writer.writerow([f"DP {category}", "Coverage", f"{coverage:.4f}"])
-            writer.writerow([f"DP {category}", "Leakage", f"{leakage:.4f}"])
+            writer.writerow([f"OP {category}", "Requests", f"{stats['requests']}"])
+            writer.writerow([f"OP {category}", "Expected Responses", f"{stats['expected']}"])
+            writer.writerow([f"OP {category}", "Actual Responses", f"{stats['actual']}"])
+            writer.writerow([f"OP {category}", "Relevant Responses", f"{stats['relevant']}"])
+            writer.writerow([f"OP {category}", "Coverage", f"{coverage:.4f}"])
+            writer.writerow([f"OP {category}", "Leakage", f"{leakage:.4f}"])
 
     def export_metrics_to_csv(self, metrics: TestMetrics, output_path: str):
         """Export metrics to CSV"""
@@ -693,22 +891,22 @@ class MetricsCalculator:
             writer.writerow(["Metric Category", "Metric Name", "Value"])
 
             # Broker Stats
-            writer.writerow(["Broker", "CPU Min (%)", f"{metrics.broker_stats.cpu_min:.2f}"])
-            writer.writerow(["Broker", "CPU Max (%)", f"{metrics.broker_stats.cpu_max:.2f}"])
-            writer.writerow(["Broker", "CPU Avg (%)", f"{metrics.broker_stats.cpu_avg:.2f}"])
-            writer.writerow(["Broker", "CPU Variance", f"{metrics.broker_stats.cpu_variance:.2f}"])
-            writer.writerow(["Broker", "Memory Min (MB)", f"{metrics.broker_stats.mem_min:.2f}"])
-            writer.writerow(["Broker", "Memory Max (MB)", f"{metrics.broker_stats.mem_max:.2f}"])
-            writer.writerow(["Broker", "Memory Avg (MB)", f"{metrics.broker_stats.mem_avg:.2f}"])
-            writer.writerow(["Broker", "Memory Variance", f"{metrics.broker_stats.mem_variance:.2f}"])
+            writer.writerow(["Broker", "CPU Min (%)", f"{metrics.broker_stats.cpu_min:.5f}"])
+            writer.writerow(["Broker", "CPU Max (%)", f"{metrics.broker_stats.cpu_max:.5f}"])
+            writer.writerow(["Broker", "CPU Avg (%)", f"{metrics.broker_stats.cpu_avg:.5f}"])
+            writer.writerow(["Broker", "CPU Variance", f"{metrics.broker_stats.cpu_variance:.5f}"])
+            writer.writerow(["Broker", "Memory Min (MB)", f"{metrics.broker_stats.mem_min:.5f}"])
+            writer.writerow(["Broker", "Memory Max (MB)", f"{metrics.broker_stats.mem_max:.5f}"])
+            writer.writerow(["Broker", "Memory Avg (MB)", f"{metrics.broker_stats.mem_avg:.5f}"])
+            writer.writerow(["Broker", "Memory Variance", f"{metrics.broker_stats.mem_variance:.5f}"])
 
             # Messaging Stats
-            writer.writerow(["Messaging", "Latency Min (ms)", f"{metrics.messaging_stats.latency_min_ms:.2f}"])
-            writer.writerow(["Messaging", "Latency Max (ms)", f"{metrics.messaging_stats.latency_max_ms:.2f}"])
-            writer.writerow(["Messaging", "Latency Avg (ms)", f"{metrics.messaging_stats.latency_avg_ms:.2f}"])
-            writer.writerow(["Messaging", "Latency Variance", f"{metrics.messaging_stats.latency_variance_ms:.2f}"])
-            writer.writerow(["Messaging", "Throughput (msgs/sec)", f"{metrics.messaging_stats.throughput_msgs_per_sec:.2f}"])
-            writer.writerow(["Messaging", "Avg Header Size (bytes)", f"{metrics.messaging_stats.avg_header_size_bytes:.2f}"])
+            writer.writerow(["Messaging", "Latency Min (ms)", f"{metrics.messaging_stats.latency_min_ms:.5f}"])
+            writer.writerow(["Messaging", "Latency Max (ms)", f"{metrics.messaging_stats.latency_max_ms:.5f}"])
+            writer.writerow(["Messaging", "Latency Avg (ms)", f"{metrics.messaging_stats.latency_avg_ms:.5f}"])
+            writer.writerow(["Messaging", "Latency Variance", f"{metrics.messaging_stats.latency_variance_ms:.5f}"])
+            writer.writerow(["Messaging", "Throughput (msgs/sec)", f"{metrics.messaging_stats.throughput_msgs_per_sec:.5f}"])
+            writer.writerow(["Messaging", "Avg Header Size (bytes)", f"{metrics.messaging_stats.avg_header_size_bytes:.5f}"])
             writer.writerow(["Messaging", "Data Messages", f"{metrics.messaging_stats.total_data_msg_count}"])
             writer.writerow(["Messaging", "Non-Data Messages", f"{metrics.messaging_stats.non_data_msg_count}"])
 
@@ -719,6 +917,7 @@ class MetricsCalculator:
                 total_invalid = sum(pc.invalid_recv_count for pc in metrics.purpose_correctness_per_sub.values())
                 total_expected = sum(pc.expected_msg_count for pc in metrics.purpose_correctness_per_sub.values())
                 total_received = sum(pc.total_recv_count for pc in metrics.purpose_correctness_per_sub.values())
+                total_rejected = sum(pc.bad_reject for pc in metrics.purpose_correctness_per_sub.values())
                 avg_false_accept = sum(pc.false_accept for pc in metrics.purpose_correctness_per_sub.values()) / total_subs
                 avg_false_reject = sum(pc.false_reject for pc in metrics.purpose_correctness_per_sub.values()) / total_subs
 
@@ -727,30 +926,29 @@ class MetricsCalculator:
                 writer.writerow(["Purpose Correctness", "Total Invalid Messages", f"{total_invalid}"])
                 writer.writerow(["Purpose Correctness", "Total Expected", f"{total_expected}"])
                 writer.writerow(["Purpose Correctness", "Total Received", f"{total_received}"])
+                writer.writerow(["Purpose Correctness", "Total Rejected", f"{total_rejected}"])
                 writer.writerow(["Purpose Correctness", "Avg False Accept Rate", f"{avg_false_accept:.4f}"])
                 writer.writerow(["Purpose Correctness", "Avg False Reject Rate", f"{avg_false_reject:.4f}"])
 
-            # DP Correctness Summary
-            if metrics.dp_correctness:
-                total_requests = len(metrics.dp_correctness)
-                total_expected_resp = sum(dp.expected_responses for dp in metrics.dp_correctness.values())
-                total_actual_resp = sum(dp.actual_responses for dp in metrics.dp_correctness.values())
-                total_relevant_resp = sum(dp.relevant_responses for dp in metrics.dp_correctness.values())
-                total_irrelevant_resp = sum(dp.irrelevant_responses for dp in metrics.dp_correctness.values())
-                avg_coverage = sum(dp.coverage for dp in metrics.dp_correctness.values()) / total_requests
-                avg_leakage = sum(dp.leakage for dp in metrics.dp_correctness.values()) / total_requests
-                avg_completion = sum(dp.completion for dp in metrics.dp_correctness.values()) / total_requests
-                avg_lost = sum(dp.lost for dp in metrics.dp_correctness.values()) / total_requests
+            # OP Correctness Summary
+            if metrics.op_correctness:
+                total_requests = len(metrics.op_correctness)
+                total_expected_resp = sum(op.expected_responses for op in metrics.op_correctness)
+                total_actual_resp = sum(op.actual_responses for op in metrics.op_correctness)
+                total_relevant_req_recv = sum(op.relevant_recv for op in metrics.op_correctness)
+                total_irrelevant_req_recv = sum(op.irrelevant_recv for op in metrics.op_correctness)
+                avg_coverage = sum(op.coverage for op in metrics.op_correctness) / total_requests
+                avg_leakage = sum(op.leakage for op in metrics.op_correctness) / total_requests
+                avg_completion = sum(op.completion for op in metrics.op_correctness) / total_requests
 
-                writer.writerow(["DP Correctness", "Total Operational Requests", f"{total_requests}"])
-                writer.writerow(["DP Correctness", "Total Expected Responses", f"{total_expected_resp}"])
-                writer.writerow(["DP Correctness", "Total Actual Responses", f"{total_actual_resp}"])
-                writer.writerow(["DP Correctness", "Total Relevant Responses", f"{total_relevant_resp}"])
-                writer.writerow(["DP Correctness", "Total Irrelevant Responses", f"{total_irrelevant_resp}"])
-                writer.writerow(["DP Correctness", "Avg Coverage", f"{avg_coverage:.4f}"])
-                writer.writerow(["DP Correctness", "Avg Leakage", f"{avg_leakage:.4f}"])
-                writer.writerow(["DP Correctness", "Avg Completion", f"{avg_completion:.4f}"])
-                writer.writerow(["DP Correctness", "Avg Lost", f"{avg_lost:.4f}"])
+                writer.writerow(["OP Correctness", "Total Operational Requests", f"{total_requests}"])
+                writer.writerow(["OP Correctness", "Total Expected Responses", f"{total_expected_resp}"])
+                writer.writerow(["OP Correctness", "Total Actual Responses", f"{total_actual_resp}"])
+                writer.writerow(["OP Correctness", "Total Relevant Requests Recieved", f"{total_relevant_req_recv}"])
+                writer.writerow(["OP Correctness", "Total Irrelevant Requests Recieved", f"{total_irrelevant_req_recv}"])
+                writer.writerow(["OP Correctness", "Avg Coverage", f"{avg_coverage:.4f}"])
+                writer.writerow(["OP Correctness", "Avg Leakage", f"{avg_leakage:.4f}"])
+                writer.writerow(["OP Correctness", "Avg Completion", f"{avg_completion:.4f}"])
 
                 # Add the category breakdown (C1_REG, C2, C3) to the CSV too
-                self._export_dp_by_category_to_csv(writer, metrics)
+                # self._export_op_by_category_to_csv(writer, metrics)

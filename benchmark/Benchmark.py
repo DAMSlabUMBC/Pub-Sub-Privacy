@@ -5,13 +5,13 @@ from os import path
 sys.path.insert(0, path.dirname(path.abspath(__file__)))
 
 import GlobalDefs
-from ConfigParser import ConfigParser, TestConfiguration
-from DeterministicTestExecutor import DeterministicTestExecutor
+from ConfigParser import ConfigParser
 from TestExecutor import TestExecutor
 from LoggingModule import ResultLogger
 import importlib
 import time
 from LoggingModule import console_log, ConsoleLogLevel
+from MetricsCalculator import MetricsCalculator
 
 
 def main():
@@ -35,7 +35,7 @@ def main():
     
     analyze_results_parser = subparsers.add_parser("analyze")
     analyze_results_parser.add_argument("logfile", help="The path to log file to analyze")
-    analyze_results_parser.add_argument("-o" "--outfile", dest="outfile", help="The file in which to store the results (default: 'BenchmarkResults_YYYY-MM-DD_HH-MM-SS.txt')")
+    analyze_results_parser.add_argument("-o" "--outfile", dest="outfile", help="The file in which to store the results (default: '<logfile>.csv')")
     analyze_results_parser.add_argument('-v', '--verbose', help='Verbose logging flag (optional)', action='store_true')
 
     args = parser.parse_args()
@@ -155,35 +155,16 @@ def run_tests(config, logfile, broker_address, port):
         console_log(ConsoleLogLevel.ERROR, f"Error: Failed to initialize logging: {e}")
         sys.exit(GlobalDefs.ExitCode.FAILED_TO_INIT_LOGGING)
 
-    GlobalDefs.LOGGING_MODULE.log_pm_method(benchmark_config.method.value)
-
     # Create test executor
     console_log(ConsoleLogLevel.INFO, f"Connecting to broker: {broker_address}:{port}")
     console_log(ConsoleLogLevel.INFO, f"Using purpose management method: {benchmark_config.method.value}")
 
-    # Choose executor based on whether test uses deterministic scheduling
-    # If test has scheduled_events, use DeterministicTestExecutor, otherwise use TestExecutor
-    use_deterministic = False
-    if benchmark_config.test_list:
-        first_test = benchmark_config.test_list[0]
-        use_deterministic = hasattr(first_test, 'scheduled_events') and len(first_test.scheduled_events) > 0
-
-    if use_deterministic:
-        console_log(ConsoleLogLevel.INFO, "Using Deterministic Test Executor")
-        executor = DeterministicTestExecutor(
-            benchmark_config.this_node_name,
-            broker_address,
-            port,
-            benchmark_config.method,
-        )
-    else:
-        console_log(ConsoleLogLevel.INFO, "Using Randomized Test Executor")
-        executor = TestExecutor(
-            benchmark_config.this_node_name,
-            broker_address,
-            port,
-            benchmark_config.method,
-        )
+    executor = TestExecutor(
+        benchmark_config.this_node_name,
+        broker_address,
+        port,
+        benchmark_config.method,
+    )
 
     # Run each test
     for test_config in benchmark_config.test_list:
@@ -210,7 +191,24 @@ def _load_client_module(module_name: str):
     return module
 
 def analyze_results(logfile, outfile):
-    console_log(ConsoleLogLevel.INFO, f"Analyzing results from: {logfile}")
+
+    if outfile is None:
+        # Use config file name by default
+        config_name = path.splitext(path.basename(logfile))[0]
+        outfile = f"{path.dirname(logfile)}/{config_name}.csv"
+
+    # Run the metrics calculation
+    print(f"Processing log file: {logfile}")
+    calculator = MetricsCalculator()
+    metrics = calculator.calculate_all_metrics(logfile)
+
+    if metrics is None:
+        print("Error: Failed to calculate metrics")
+        sys.exit(1)
+
+    # Save to CSV if they want that
+    calculator.export_metrics_to_csv(metrics, outfile)
+    print(f"Metrics exported to: {outfile}")
     return 0
 
 if __name__ == "__main__":

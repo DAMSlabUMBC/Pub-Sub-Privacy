@@ -14,10 +14,13 @@ MEM_METRICS_LABEL: str = "MEM_METRICS"
 CONNECT_LABEL: str = "CONNECT"
 DISCONNECT_LABEL: str = "DISCONNECT"
 SUBSCRIBE_LABEL: str = "SUBSCRIBE"
+OP_SUBSCRIBE_LABEL: str = "SUBSCRIBE_OP"
 PUBLISH_LABEL: str = "PUBLISH"
 OP_PUBLISH_LABEL: str = "PUBLISH_OP"
 RECV_LABEL: str = "RECV"
 OP_RECV_LABEL: str = "RECV_OP"
+OP_RESP_PUBLISH_LABEL: str = "PUBLISH_OP_RESP"
+OP_RESP_RECV_LABEL: str = "RECV_OP_RESP"
 SEPARATOR: str = "@@"
 
 class ConsoleLogLevel(Enum):
@@ -130,7 +133,6 @@ class ResultLogger:
 
         return
     
-    # TODO finalize these
     def log_seed(self, seed):
         message = f"{SEED_LABEL}{SEPARATOR}{seed}"
         self.log_queue.put(message)
@@ -158,6 +160,10 @@ class ResultLogger:
     def log_subscribe(self, timestamp, benchmark_id, client_id, topic_filter, purpose_filter, sub_id):
         message = f"{SUBSCRIBE_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_filter}{SEPARATOR}{purpose_filter}{SEPARATOR}{sub_id}"
         self.log_queue.put(message)
+        
+    def log_op_subscribe(self, timestamp, benchmark_id, client_id, topic_filter, purpose_filter, sub_id):
+        message = f"{OP_SUBSCRIBE_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_filter}{SEPARATOR}{purpose_filter}{SEPARATOR}{sub_id}"
+        self.log_queue.put(message)
 
     def log_publish(self, timestamp, benchmark_id, client_id, corr_data, topic_name, purpose, msg_type):
         message = f"{PUBLISH_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_name}{SEPARATOR}{purpose}{SEPARATOR}{msg_type}{SEPARATOR}{corr_data}"
@@ -173,4 +179,12 @@ class ResultLogger:
         
     def log_operation_recv(self, timestamp, benchmark_id, recv_client_id, sending_client_id, corr_data, topic_name, op_type, op_category, op_status, sub_id):
         message = f"{OP_RECV_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{recv_client_id}{SEPARATOR}{sending_client_id}{SEPARATOR}{topic_name}{SEPARATOR}{sub_id}{SEPARATOR}{op_type}{SEPARATOR}{op_category}{SEPARATOR}{op_status}{SEPARATOR}{corr_data}"
+        self.log_queue.put(message)
+        
+    def log_operation_response_publish(self, timestamp, benchmark_id, client_id, corr_data, topic_name, purpose, op_type, op_category):
+        message = f"{OP_RESP_PUBLISH_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{client_id}{SEPARATOR}{topic_name}{SEPARATOR}{purpose}{SEPARATOR}{op_type}{SEPARATOR}{op_category}{SEPARATOR}{corr_data}"
+        self.log_queue.put(message)
+        
+    def log_operation_response_recv(self, timestamp, benchmark_id, recv_client_id, sending_client_id, corr_data, topic_name, op_type, op_category, op_status, sub_id):
+        message = f"{OP_RESP_RECV_LABEL}{SEPARATOR}{timestamp}{SEPARATOR}{benchmark_id}{SEPARATOR}{recv_client_id}{SEPARATOR}{sending_client_id}{SEPARATOR}{topic_name}{SEPARATOR}{sub_id}{SEPARATOR}{op_type}{SEPARATOR}{op_category}{SEPARATOR}{op_status}{SEPARATOR}{corr_data}"
         self.log_queue.put(message)

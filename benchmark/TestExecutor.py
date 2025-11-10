@@ -1,69 +1,32 @@
 import paho.mqtt.client as mqtt
 from paho.mqtt.reasoncodes import ReasonCode
 from paho.mqtt.properties import Properties
-import random
 import time
-from math import ceil
-import threading
+import random
 import ischedule
+import threading
 import sched
+from math import ceil  # Need this for encoding correlation data in operational responses
+from typing import Dict, List, Optional, Tuple, Any
 import GlobalDefs
-from typing import List, Dict, Tuple, Any
-import datetime
-from dataclasses import dataclass
+from ConfigParser import TestConfiguration
+from EventScheduler import EventScheduler
+from DeviceDefinitions import (
+    DeviceManager, DeviceInstance, PublisherDefinition,
+    SubscriberDefinition, PurposeDefinition, DeviceDefinition
+)
+from BrokerMonitor import BrokerMonitor
+from LoggingModule import console_log, ConsoleLogLevel
 
-class TestConfiguration:
-    
-    # === Overall information
-    name: str
-    test_duration_ms: int
-    
-    # === Client information ===
-    client_count: int
-    qos: int = 0
-    
-    # Used to randomly disconnect/reconnect clients
-    perform_connection_test: bool = False
-    disconnection_pct: float = 0.0
-    
-    # === Topic information ===   
-    pct_topics_per_client: float = 1.0
-    publish_topic_list: List[str] = list()
-    subscribe_topic_list: List[str] = list()
-    
-    # === Purpose information ===
-    purpose_shuffle_period_ms: int = 0
-    purpose_shuffle_pct: float = 0.0
-    publish_purpose_list: List[str] = list()
-    subscribe_purpose_list: List[str] = list()
-    
-    # === Publication information ===   
-    pct_to_publish_on: float = 1.0
-    pct_topics_per_pub: float = 1.0
-    pub_period_ms: int = 500
-    min_payload_length_bytes: int = 1
-    max_payload_length_bytes: int = 1024
-    
-    # === Operation information ===
-    op_send_chance: float = 0.0
-    c1_reg_operations: List[str] = list()
-    possible_operations: Dict[str, str] = dict()
-    
-    def __init__(self, name:str, test_duration_ms: int, client_count: int):
-        self.name = name
-        self.test_duration_ms = test_duration_ms
-        self.client_count = client_count
-    
+class TestExecutor():
+    """Test executor with deterministic event scheduling and per-device publication rates"""
 
-class TestExecutor:
-    
     class TestClient:
         client: mqtt.Client
         name: str
         subscribed_topics: Dict[str, str] # Maps topic filter to purpose filter
         publish_topics: Dict[str, str] # Maps topic to purpose
         is_connected: bool
-        has_set_c1_ops: bool
         msg_send_counter: int
         message_id_to_send_counter: Dict[int, int]
         
@@ -73,7 +36,6 @@ class TestExecutor:
             self.subscribed_topics = dict()
             self.publish_topics = dict()
             self.is_connected = False
-            self.has_set_c1_ops = False
             self.msg_send_counter = 0
             self.message_id_to_send_counter = dict()
             
@@ -81,7 +43,7 @@ class TestExecutor:
             ret_val = self.msg_send_counter
             self.msg_send_counter = self.msg_send_counter + 1
             return ret_val
-    
+
     my_id: str
     broker_address: str
     broker_port: int
@@ -93,458 +55,694 @@ class TestExecutor:
     all_clients: List[TestClient]
     pending_publishes: Dict[str, Dict[int, Tuple[str, str, str, float]]] # client name => [message id => (topic, purpose, message_type, timestamp)]
     pending_subscribes: Dict[str, Dict[int, Tuple[str, str, int, float]]] # client name => [message id => (topic_filter, purpose_filter, sub_id, timestamp)]
+    sub_ids: Dict[str, Dict[str, int]]
     publish_lock: threading.Lock
     subscribe_lock: threading.Lock
-    
-    def __init__(self, executor_id: str, broker_address: str, broker_port: int, method: GlobalDefs.PurposeManagementMethod, seed: int | None = None):
-        
+
+    # Operational request tracking
+    next_op_time_ms: float
+    c1_reg_ops: List[str]
+    all_operations: Dict[str, str]
+
+    def __init__(self, executor_id: str, broker_address: str, broker_port: int,
+                 method: GlobalDefs.PurposeManagementMethod):
+
         self.my_id = executor_id
         self.broker_address = broker_address
         self.broker_port = broker_port
         self.method = method
         self.pending_publishes = dict()
         self.pending_subscribes = dict()
+        self.sub_ids = dict()
         self.stop_event = threading.Event()
-        self.all_clients = list()
         self.publish_lock = threading.Lock()
         self.subscribe_lock = threading.Lock()
-        
-        # If not supplied, set random seed based on time
-        if seed is None:
-            seed = int(time.time())
-            
+
+        # Operational request tracking
+        self.next_op_time_ms = 0
+        self.c1_reg_ops = []
+        self.all_operations = {}
+
         #  Seed the random number generator and write seed to log file
-        random.seed(seed)
+        seed = int(time.time())
+        random.seed(time.time())
         GlobalDefs.LOGGING_MODULE.log_seed(seed)
-        
+
         # Configure scheduler
         self.duration_scheduler = sched.scheduler()
-        
+
+        # Scheduling and device management
+        self.event_scheduler = EventScheduler()
+        self.device_manager = DeviceManager()
+        self.broker_monitor: Optional[BrokerMonitor] = None
 
     def setup_test(self, test_config: TestConfiguration):
-        
-        #Create a clean environment for the test
+        # """Setup test with deterministic scheduling"""
+        console_log(ConsoleLogLevel.DEBUG, f"Configuring test {test_config.name}", __name__)
+
+        # Clear previous test data
         self._clear_previous_test_data()
-        
-        # Need to save this for the test
         self.current_config = test_config
-        
-        print(f"Configuring test {test_config.name}")
-        
-        # Create clients
-        print(f"\tSetting up test...")
-        self._create_clients()
-        
-        # Determine which topic/purposes each client will publish to
-        self._assign_publication_topics_and_purposes()
-        
-        # Connect clients
-        print(f"\tConnecting and configuring initial clients...")
-        self._connect_all_clients()
-        
-        # Give a moment to allow messages to travel
-        time.sleep(1)
-        
-        print(f"Test configured!")
-        
-    
-    def perform_test(self, test_config: TestConfiguration):
-        
-        print(f"Running test {test_config.name}")
-        
-        # == Setup scheduler tasks, timing is in seconds and needs to be divided by 1000 ==
-        # Publish task
-        ischedule.schedule(self._publish_from_clients, interval=(test_config.pub_period_ms / 1000.0))
 
-        # Shuffle purpose task
-        if test_config.purpose_shuffle_pct > 0:
-            ischedule.schedule(self._shuffle_publication_purposes, interval=(test_config.purpose_shuffle_period_ms / 1000.0))
-        
-        # == Main test loop ==
-        # Calculate end time
-        start_time = time.monotonic()
-        test_dur_secs = test_config.test_duration_ms / 1000.0
-        end_time = start_time + test_dur_secs
+        # Setup purpose definitions
+        self._setup_purpose_definitions(test_config)
 
-        # Disconnect testing tasks if enabled
-        if test_config.perform_connection_test:
-            disconnect_time = start_time + (test_dur_secs * (1/3))
-            reconnect_time = start_time + (test_dur_secs * (2/3))
-            self.duration_scheduler.enterabs(disconnect_time, 1, self._disconnect_clients)
-            self.duration_scheduler.enterabs(reconnect_time, 1, self._connect_all_clients)
-                
-        # Start scheduler processing
-        self.stop_event.clear()
-        
-        # Set event to be triggered at the test duration end
-        self.duration_scheduler.enterabs(end_time, 1, self._end_test)
-        stop_thread = threading.Thread(target=self.duration_scheduler.run)
-        print(f"\tTest will run for {test_dur_secs} second(s)")
-        stop_thread.start()
-        
-        # Start the threads
-        # NOTE this must be done AFTER the scheduler above, or it won't terminate
-        print(f"\tTest started at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}!")
-        
-        try:
-            ischedule.run_loop(stop_event=self.stop_event)
-        except:
-            self.stop_event.clear()
-            raise
-        
-        print(f"\tTest complete! Cleaning up...")
-        
-        # Give few seconds to finish publications and receives
-        time.sleep(2)
-        
-        # Disconnect all clients and clean data
-        self._disconnect_all_clients()
-        self._clear_previous_test_data()
+        # Setup device definitions
+        self._setup_device_definitions(test_config)
 
-        print(f"Cleanup complete!")
-        
+        # Create device instances
+        self._create_device_instances(test_config)
+
+        # Setup event scheduler
+        self._setup_event_scheduler(test_config)
+        self.event_scheduler.print_schedule()
+
+        # Setup operational requests
+        self._setup_operational_requests(test_config)
+
+        # Setup broker monitoring if enabled
+        if test_config.monitor_broker:
+            self._setup_broker_monitoring(test_config)
+
+        console_log(ConsoleLogLevel.DEBUG, f"Test configured!",  __name__)
         
     def _clear_previous_test_data(self):
+        self.device_manager.clear()
+        self.event_scheduler.clear()
+        self.pending_publishes = dict()
+        if self.broker_monitor:
+            self.broker_monitor.clear_samples()
+        
         self.current_config = None
-        self.all_clients = list()
         self.pending_publishes = dict()
         ischedule.reset()
 
-            
-    def _end_test(self):
-        # Ending just means triggering the stop event
-        self.stop_event.set()
+    def perform_test(self, test_config: TestConfiguration):
+        """Run a test with deterministic scheduling"""
+
+        console_log(ConsoleLogLevel.INFO, f"Starting test {test_config.name} at {time.strftime('%Y-%m-%d %H:%M:%S')}", __name__)
+        console_log(ConsoleLogLevel.INFO, f"Test will run for {test_config.test_duration_ms / 1000.0} second(s)")
+
+        # Log PM method for metrics calculation
+        GlobalDefs.LOGGING_MODULE.log_pm_method(self.method.value)
+
+        # Start scheduler and timer
+        test_start_time_ms = time.monotonic() * 1000.0
+        self.event_scheduler.start()
+
+        if self.broker_monitor:
+            self.broker_monitor.start_monitoring()
+
+        # Main test loop
+        test_end_time_ms = test_start_time_ms + test_config.test_duration_ms
+
+        try:
+            while time.monotonic() * 1000.0 < test_end_time_ms:
+                current_time_ms = time.monotonic() * 1000.0
+                elapsed_ms = current_time_ms - test_start_time_ms
+
+                # Process scheduled events
+                self.event_scheduler.process_due_events()
+
+                # Publish from devices that are ready
+                self._publish_from_ready_devices(elapsed_ms)
+
+                # Send operational requests if it's time
+                self._send_operational_requests_if_ready(elapsed_ms)
+
+                # Collect broker metrics if needed
+                if self.broker_monitor and self.broker_monitor.should_collect_sample(test_config.monitor_interval_ms):
+                    self.broker_monitor.collect_sample()
+
+                # Sleep briefly to avoid busy waiting
+                # Calculate sleep time based on next event
+                sleep_time = self._calculate_optimal_sleep_time(test_config)
+                time.sleep(sleep_time)
+
+        except KeyboardInterrupt:
+            console_log(ConsoleLogLevel.WARNING, f"Test interrupted by user")
+        except Exception as e:
+            console_log(ConsoleLogLevel.WARNING, f"Test failed with error: {e}")
+            raise
+
+        console_log(ConsoleLogLevel.INFO, f"Test complete! Cleaning up...", __name__)
+
+        # Stop monitoring
+        if self.broker_monitor:
+            self.broker_monitor.stop_monitoring()
+
+        # Give a moment to finish pending operations
+        time.sleep(2)
+
+        # Cleanup
+        self._disconnect_all_devices()
         
+        # Log out broker metrics
+        if self.broker_monitor:
+            self.broker_monitor.log_summary()
+            
+        # Give a moment to finish pending operations
+        time.sleep(2)
         
-    """1. Create specified number of clients with random topic subscriptions""" 
-    def _create_clients(self) -> None:
-        
-        # Create the specified number of clients
-        for i in range(self.current_config.client_count):    
-            
-            name = f"{self.my_id}__{self.current_config.name}__C{i}"
-            client = GlobalDefs.CLIENT_MODULE.create_v5_client(name)
-            
-            # Assign callbacks
-            client.on_connect = self._on_connect
-            client.on_disconnect = self._on_disconnect
-            client.on_subscribe = self._on_subscribe
-            client.on_publish = self._on_publish
-            client.on_message = self._on_message_recv
-            
-            # Add to all clients
-            test_client = self.TestClient(client, name)
-            client.user_data_set(test_client) # Set reference to client data
-            self.all_clients.append(test_client)
-            
-            
-    def _connect_all_clients(self) -> None:
-        # Connect any non-connected client specified number of clients
-        clients_to_connect = [x for x in self.all_clients if not x.is_connected]
-        
-        for test_client in clients_to_connect:
-            result_code = GlobalDefs.CLIENT_MODULE.connect_client(test_client.client, self.broker_address, self.broker_port)
-    
-            if result_code == mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
-                test_client.client.loop_start()
+        self._clear_previous_test_data()
+
+        console_log(ConsoleLogLevel.INFO, f"Cleanup complete!", __name__)
+
+    def _setup_purpose_definitions(self, test_config: TestConfiguration):
+        """Load purpose definitions into the device manager"""
+        for purpose_id, purpose_info in test_config.purpose_definitions.items():
+            purpose_def = PurposeDefinition(
+                id=purpose_id,
+                description=purpose_info.get('description', '')
+            )
+            self.device_manager.register_purpose_definition(purpose_def)
+
+    def _setup_device_definitions(self, test_config: TestConfiguration):
+        """Load device definitions into the device manager"""
+        for dev_id, dev_config in test_config.device_definitions.items():
+            dev_type = dev_config['type']
+
+            device_def: DeviceDefinition
+            if dev_type == 'publisher':
+                device_def = PublisherDefinition(
+                    id=dev_id,
+                    topic=dev_config['topic'],
+                    pub_period_ms=dev_config['pub_period_ms'],
+                    min_payload_bytes=dev_config['min_payload_bytes'],
+                    max_payload_bytes=dev_config['max_payload_bytes']
+                )
+            elif dev_type == 'subscriber':
+                device_def = SubscriberDefinition(
+                    id=dev_id,
+                    topic_filter=dev_config['topic_filter']
+                )
             else:
-                raise RuntimeError(f"Failed to connect client {test_client.name}")
-   
-    def _subscribe_client_for_operations(self, test_client: TestClient):
-        
-        client_id = test_client.name
-        operation_response_topic = f"{GlobalDefs.OP_RESPONSE_TOPIC}/{client_id}"
-        # Subscribe to all operational topics and the default response topic
-        topics = [GlobalDefs.ON_TOPIC, GlobalDefs.ONP_TOPIC + "/" + client_id, GlobalDefs.OR_TOPIC, GlobalDefs.ORS_TOPIC + "/" + client_id, operation_response_topic]
-        purpose_for_subscription = GlobalDefs.OP_PURPOSE
-        
-        # Subscribe to each of the non-broker operational topics
-        for topic in topics:
-            
-            # Lock this section to prevent a race condition with _on_subscribe
-            self.subscribe_lock.acquire()
-            
-            results = GlobalDefs.CLIENT_MODULE.subscribe_for_operations(test_client.client, self.method, topic)
-            
-            # Save time
-            now = time.time()
-            
-            # Store results to correlate with subscription ids
-            for result_code, mid, sub_id in results:
-                if result_code != mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
-                    raise RuntimeError(f"Failed to subscribe on {topic} with purpose {purpose_for_subscription}")
+                raise ValueError(f"Unknown device type: {dev_type}")
+
+            self.device_manager.register_device_definition(device_def)
+
+    def _create_device_instances(self, test_config: TestConfiguration):
+        """Create device instances from definitions"""
+        for instance_config in test_config.device_instances_config:
+            device_def_id = instance_config['device_def_id']
+            instance_id = instance_config['instance_id']
+            purpose_filter = instance_config['purpose_filter']
+            count = instance_config.get('count', 1)
+
+            # Create multiple instances if count > 1
+            for i in range(count):
+                if count > 1:
+                    full_instance_id = f"{instance_id}_{i}"
                 else:
-                    if not test_client.name in self.pending_subscribes:
-                        self.pending_subscribes[test_client.name] = dict()
-                    self.pending_subscribes[test_client.name][mid] = (topic, purpose_for_subscription, sub_id, now)
-                
-            # Release lock
-            self.subscribe_lock.release()
-            
-                
-    def _subscribe_client_for_data(self, test_client: TestClient):
+                    full_instance_id = instance_id
 
-        # Check if topics already exist, if so resubscribe to these
-        if len(test_client.subscribed_topics) > 0:
-            
-            for topic in test_client.subscribed_topics:
-                purpose_for_subscription = test_client.subscribed_topics[topic]
-                
-                # Lock this section to prevent a race condition with _on_subscribe
-                self.subscribe_lock.acquire()
-                
-                results = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(test_client.client, self.method, 
-                                                                                          topic, purpose_for_subscription, self.current_config.qos)
-                # Save time
-                now = time.time()
-                
-                # Store results to correlate with subscription ids
-                for result_code, mid, sub_id in results:
-                    if result_code != mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
-                        raise RuntimeError(f"Failed to subscribe on {topic} with purpose {purpose_for_subscription}")
-                    else:
-                        if not test_client.name in self.pending_subscribes:
-                            self.pending_subscribes[test_client.name] = dict()
-                        self.pending_subscribes[test_client.name][mid] = (topic, purpose_for_subscription, sub_id, now)
-                
-                # Release lock
-                self.subscribe_lock.release()
-        
-        # If not, determine new topics and purpose to subscribe on
+                # Create MQTT client
+                client_name = f"{test_config.name}__{full_instance_id}"
+                mqtt_client = GlobalDefs.CLIENT_MODULE.create_v5_client(client_name)
+
+                # Set callbacks
+                mqtt_client.on_connect = self._on_connect
+                mqtt_client.on_disconnect = self._on_disconnect
+                mqtt_client.on_subscribe = self._on_subscribe
+                mqtt_client.on_publish = self._on_publish
+                mqtt_client.on_message = self._on_message_recv
+
+                # Create device instance
+                device_instance = self.device_manager.create_device_instance(
+                    device_def_id, full_instance_id, purpose_filter, mqtt_client, client_name
+                )
+
+                # Set user data for callbacks
+                mqtt_client.user_data_set(device_instance)
+
+    def _setup_event_scheduler(self, test_config: TestConfiguration):
+        """Setup scheduled events"""
+        # Register event handlers
+        self.event_scheduler.register_handler("connect_all", self._handle_connect_all)
+        self.event_scheduler.register_handler("disconnect_all", self._handle_disconnect_all)
+        self.event_scheduler.register_handler("connect", self._handle_connect_devices)
+        self.event_scheduler.register_handler("disconnect", self._handle_disconnect_devices)
+        self.event_scheduler.register_handler("reconnect", self._handle_reconnect_devices)
+        self.event_scheduler.register_handler("start_publishing", self._handle_start_publishing)
+        self.event_scheduler.register_handler("start_publishing_all", self._handle_start_publishing_all)
+        self.event_scheduler.register_handler("stop_publishing", self._handle_stop_publishing)
+        self.event_scheduler.register_handler("stop_publishing_all", self._handle_stop_publishing_all)
+        self.event_scheduler.register_handler("change_purpose", self._handle_change_purpose)
+
+        # Schedule all events
+        for event_config in test_config.scheduled_events:
+            self.event_scheduler.schedule_event(
+                time_ms=event_config['time_ms'],
+                event_type=event_config['type'],
+                params=event_config,
+                description=event_config.get('description', '')
+            )
+
+    def _setup_broker_monitoring(self, test_config: TestConfiguration):
+        """Setup broker monitoring"""
+        self.broker_monitor = BrokerMonitor(test_config.node_exporter_url)
+
+    def _setup_operational_requests(self, test_config: TestConfiguration):
+        """Setup operational request tracking"""
+        # Build operations dictionary from config
+        self.all_operations = {}
+
+        # Add C1 registration operations
+        if hasattr(test_config, 'c1_reg_operations'):
+            for op in test_config.c1_reg_operations:
+                self.c1_reg_ops.append(op)
+
+        # Add all other operations
+        if hasattr(test_config, 'all_operations'):
+            self.all_operations.update(test_config.all_operations)
+
+        # Initialize next op time based on op_send_rate
+        if hasattr(test_config, 'op_send_rate') and test_config.op_send_rate > 0:
+            self.next_op_time_ms = test_config.op_send_rate
         else:
-            # Determine the specified number of topics to connect to 
-            topics_for_subscription_count = (int)(len(self.current_config.subscribe_topic_list) * self.current_config.pct_topics_per_client)
-            topics_for_subscription = random.sample(self.current_config.subscribe_topic_list, topics_for_subscription_count)
+            self.next_op_time_ms = float('inf')  # Disable if not configured
             
-            for topic in topics_for_subscription:
-            
-                # Select a purpose filter for this topic
-                purpose_for_subscription = random.choice(self.current_config.subscribe_purpose_list)
-                
-                # Lock this section to prevent a race condition with _on_subscribe
-                self.subscribe_lock.acquire()
-                
-                results = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(test_client.client, self.method, 
-                                                                                          topic, purpose_for_subscription)
-                
-                # Save time
-                now = time.time()
-                
-                # Store results to correlate with subscription ids
-                for result_code, mid, sub_id in results:
-                    if result_code != mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
-                        raise RuntimeError(f"Failed to subscribe on {topic} with purpose {purpose_for_subscription}")
-                    else:
-                        if not test_client.name in self.pending_subscribes:
-                            self.pending_subscribes[test_client.name] = dict()
-                        self.pending_subscribes[test_client.name][mid] = (topic, purpose_for_subscription, sub_id, now)
-                        test_client.subscribed_topics[topic] = purpose_for_subscription
-                
-                # Release lock
-                self.subscribe_lock.release()
-                
-                
-    def _assign_publication_topics_and_purposes(self) -> None:
+    def _register_subscribers_c1_operation_data(self, subscriber: DeviceInstance) -> None:
         
-        # Do this for all clients
-        for test_client in self.all_clients:
-            
-            # Find the specified number of topics
-            topics_for_publication_count = (int)(len(self.current_config.publish_topic_list) * self.current_config.pct_topics_per_client)
-            topics_for_publication = random.sample(self.current_config.publish_topic_list, topics_for_publication_count)
-            
-            for topic in topics_for_publication:
-                # Assign a purpose
-                purpose_for_publication = random.choice(self.current_config.publish_purpose_list)
-                test_client.publish_topics[topic] = purpose_for_publication
-                   
-                
-    def _register_initial_publication_purposes_for_client(self, test_client: TestClient) -> None:
-
-        # All clients have already had this done
-        for topic in test_client.publish_topics:
-            # Prep publications (if the method needs it)
-            GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(test_client.client, self.method, topic, test_client.publish_topics[topic])
-            
-            
-    def _register_data_for_c1_operations_for_client(self, test_client: TestClient) -> None:
-        
-        # Nothing else to do
-        if test_client.has_set_c1_ops:
+        # This isn't used unless we're using an enhanced broker
+        if self.method is GlobalDefs.PurposeManagementMethod.PM_0 or self.method is GlobalDefs.PurposeManagementMethod.PM_1:
             return
         
-        # Not used if not broker-modifying
-        if self.method is not GlobalDefs.PurposeManagementMethod.PM_0 and self.method is not GlobalDefs.PurposeManagementMethod.PM_1:
-            for c1_op in self.current_config.c1_reg_operations:
-                GlobalDefs.CLIENT_MODULE.publish_operation_request(test_client.client, self.method, c1_op, test_client.get_send_counter())
-                test_client.has_set_c1_ops = True
-                
+        # Register subscriber for all c1 ops
+        for c1_op in self.c1_reg_ops:
             
-    def _disconnect_clients(self) -> None:
-        
-        # Find connected clients
-        connected_clients = [client for client in self.all_clients if client.is_connected]
-                
-        # Disconnect the specified number of clients
-        clients_to_disconnect_count = (int)(len(connected_clients) * self.current_config.disconnection_pct)
-        clients_to_disconnect = random.sample(connected_clients, clients_to_disconnect_count)
-                
-        for test_client in clients_to_disconnect:
-            result_code = GlobalDefs.CLIENT_MODULE.disconnect_client(test_client.client)
-    
-            if result_code == mqtt.MQTT_ERR_NO_CONN:
-                # Already disconnected
-                test_client.is_connected = False
-                
-            elif result_code != mqtt.MQTTErrorCode.MQTT_ERR_SUCCESS:
-                raise RuntimeError(f"Failed to disconnect client {test_client.name}")
+            message_counter = subscriber.message_count
+            subscriber.message_count += 1
             
+            GlobalDefs.CLIENT_MODULE.publish_operation_request(subscriber.mqtt_client, self.method, c1_op, message_counter, self.current_config.qos)
             
-    def _disconnect_all_clients(self) -> None:
-        # Find connected clients
-        connected_clients = [client for client in self.all_clients if client.is_connected]
-            
-        for test_client in connected_clients:
-            GlobalDefs.CLIENT_MODULE.disconnect_client(test_client.client)
-            
-    def _shuffle_publication_purposes(self) -> None:
-        
-        # Shuffle the purposes for requested percent of clients
-        connected_clients = [client for client in self.all_clients if client.is_connected]
-        clients_to_shuffle_count = (int)(len(connected_clients) * self.current_config.purpose_shuffle_pct)
-        clients_to_shuffle = random.sample(connected_clients, clients_to_shuffle_count)
 
-        for test_client in clients_to_shuffle:
+    def _send_operational_requests_if_ready(self, elapsed_ms: float):
+        """Send operational requests from publishers if it's time"""
+        if elapsed_ms < self.next_op_time_ms or not self.all_operations:
+            return
 
-            # Select a new purpose for each topic
-            for topic in test_client.publish_topics:             
-                purpose_for_publication = random.choice(self.current_config.publish_purpose_list)
-                test_client.publish_topics[topic] = purpose_for_publication
+        # Get all connected publishers
+        publishers = [d for d in self.device_manager.get_all_publishers() if d.is_connected]
+
+        if not publishers:
+            return
+        
+        # For each operation pick a random publisher
+        for op, op_category in self.all_operations.items(): 
+
+            # Pick a random publisher to send the request
+            publisher = random.choice(publishers)
+
+            # Send the operational request
+            self._send_operational_request(publisher, op, op_category)
+
+        # Schedule next operational request
+        if hasattr(self.current_config, 'op_send_rate') and self.current_config.op_send_rate > 0:
+            self.next_op_time_ms = elapsed_ms + self.current_config.op_send_rate
             
-    
-    def _publish_from_clients(self):
-        # Find connected clients
-        connected_clients = [client for client in self.all_clients if client.is_connected]
-        
-        # Publish on specified number of clients
-        clients_to_publish_count = (int)(len(connected_clients) * self.current_config.pct_to_publish_on)
-        clients_to_publish = random.sample(connected_clients, clients_to_publish_count)
-        
-        for test_client in clients_to_publish:
+
+    def _send_operational_response(self, subscriber: DeviceInstance, response_topic: str, operation_type: str, correlation_data: int):
+        """Have a subscriber send a response to an operational request
+
+        This gets called when a subscriber receives an operational request (e.g., Access, Portability)
+        from a subscriber and needs to respond with the requested data.
+        """
+        if not isinstance(subscriber.device_definition, SubscriberDefinition):
+            return
             
-            # Check if we should also do an operational publish
-            if(random.random() < self.current_config.op_send_chance):
-                self._publish_operation(test_client)
-            else:
-                self._publish_data(test_client)
-             
-                    
-    def _publish_operation(self, test_client: TestClient):
-        
-        message_counter = test_client.get_send_counter()
-        
-        # Select an operation for this topic
-        operation = random.choice(list(self.current_config.possible_operations.keys()))
-        
-        # Lock this section to prevent a race condition with _on_publish
+        results = GlobalDefs.CLIENT_MODULE.publish_operation_response(subscriber.mqtt_client, self.method, response_topic, operation_type, "Success", correlation_data, self.current_config.qos)
+
+        # Track this response in pending publishes for logging
         self.publish_lock.acquire()
-        
-        results = GlobalDefs.CLIENT_MODULE.publish_operation_request(test_client.client, self.method, operation, message_counter)
-        
-        # Save time
         now = time.time()
         
         for message_info, topic in results:
-            if not test_client.name in self.pending_publishes:
-                self.pending_publishes[test_client.name] = dict()
-                
-            # For purpose management method 1, we need to extract the topic properly
+            if subscriber.mqtt_client_name not in self.pending_publishes:
+                self.pending_publishes[subscriber.mqtt_client_name] = {}
+
+            # Handle PM_1 topic encoding
             if self.method == GlobalDefs.PurposeManagementMethod.PM_1:
                 purpose_start_index = topic.rfind('[')
                 topic = topic[:purpose_start_index - 1]
-                
-            self.pending_publishes[test_client.name][message_info.mid] = (topic, GlobalDefs.OP_PURPOSE, operation, now)
+
+            self.pending_publishes[subscriber.mqtt_client_name][message_info.mid] = (
+                topic, GlobalDefs.OP_PURPOSE, operation_type, now
+            )
+
+            # Save message counter for correlations
+            subscriber.message_id_to_send_counter[message_info.mid] = correlation_data
+
+        self.publish_lock.release()
+
+    def _send_operational_request(self, publisher: DeviceInstance, operation: str, operation_category: str):
+        """Send an operational request from a subscriber"""
+        _ = operation_category  # Not currently used but available for future logic
+
+        self.publish_lock.acquire()
+
+        message_counter = publisher.message_count
+        publisher.message_count += 1
+
+        results = GlobalDefs.CLIENT_MODULE.publish_operation_request(
+            publisher.mqtt_client,
+            self.method,
+            operation,
+            message_counter,
+            qos=self.current_config.qos
+        )
+
+        now = time.time()
+
+        for message_info, topic in results:
+            if publisher.mqtt_client_name not in self.pending_publishes:
+                self.pending_publishes[publisher.mqtt_client_name] = {}
+
+            # Handle PM_1 topic encoding
+            if self.method == GlobalDefs.PurposeManagementMethod.PM_1:
+                purpose_start_index = topic.rfind('[')
+                topic = topic[:purpose_start_index - 1]
+
+            self.pending_publishes[publisher.mqtt_client_name][message_info.mid] = (
+                topic, GlobalDefs.OP_PURPOSE, operation, now
+            )
+
+            # Save message counter for correlations
+            publisher.message_id_to_send_counter[message_info.mid] = message_counter
+
+        self.publish_lock.release()
+
+    def _publish_from_ready_devices(self, elapsed_ms: float):
+        """Publish from all devices that are ready based on their individual publication rates"""
+        ready_publishers = self.device_manager.get_publishers_ready_to_publish(elapsed_ms)
+
+        for device_instance in ready_publishers:
+            self._publish_from_device(device_instance, elapsed_ms)
+
+    def _publish_from_device(self, device_instance: DeviceInstance, elapsed_ms: float):
+        """Publish a message from a specific device"""
+        device_def = device_instance.device_definition
+        if not isinstance(device_def, PublisherDefinition):
+            return
+
+        # Generate payload
+        payload_size = random.randint(device_def.min_payload_bytes, device_def.max_payload_bytes)
+        payload = random.randbytes(payload_size) if payload_size > 0 else None
+
+        # Publish message
+        self.publish_lock.acquire()
+        message_counter = device_instance.message_count
+
+        results = GlobalDefs.CLIENT_MODULE.publish_with_purpose(
+            device_instance.mqtt_client,
+            self.method,
+            device_def.topic,
+            device_instance.current_purpose_filter,
+            qos=self.current_config.qos,
+            payload=payload,
+            correlation_data=message_counter
+        )
+
+        now = time.time()
+
+        for message_info, topic in results:
+            if device_instance.mqtt_client_name not in self.pending_publishes:
+                self.pending_publishes[device_instance.mqtt_client_name] = {}
+
+            # Handle PM_1 topic encoding
+            if self.method == GlobalDefs.PurposeManagementMethod.PM_1:
+                purpose_start_index = topic.rfind('[')
+                topic = topic[:purpose_start_index - 1]
+
+            self.pending_publishes[device_instance.mqtt_client_name][message_info.mid] = (
+                topic, device_instance.current_purpose_filter, "DATA", now
+            )
             
             # Save message counter for correlations
-            test_client.message_id_to_send_counter[message_info.mid] = message_counter
-            
-        # Release lock
+            device_instance.message_id_to_send_counter[message_info.mid] = message_counter
+
         self.publish_lock.release()
-            
-    
-    def _publish_data(self, test_client: TestClient):
-        # Publish on specified number of topics
-        topics_to_publish_on_count = ceil((len(test_client.publish_topics) * self.current_config.pct_topics_per_pub))
-        topics_to_publish_on = random.sample(sorted(test_client.publish_topics.keys()), topics_to_publish_on_count)
+
+        # Mark as published
+        device_instance.mark_published(elapsed_ms)
+
+    def _calculate_optimal_sleep_time(self, test_config: TestConfiguration) -> float:
+        """Calculate optimal sleep time based on next event and publication schedules"""
+        min_sleep = 0.001  # 1ms minimum
+        max_sleep = 0.01  # 10ms maximum
+
+        # Check next scheduled event
+        time_until_next_event = self.event_scheduler.get_time_until_next_event_ms()
+
+        # Check next publication from any device
+        min_pub_period = float('inf')
+        for publisher in self.device_manager.get_all_publishers():
+            if isinstance(publisher.device_definition, PublisherDefinition):
+                min_pub_period = min(min_pub_period, publisher.device_definition.pub_period_ms)
+
+        # Use the minimum of event time and publication period
+        if time_until_next_event is not None:
+            sleep_ms = min(time_until_next_event, min_pub_period / 10.0)
+        else:
+            sleep_ms = min_pub_period / 10.0
+
+        sleep_seconds = sleep_ms / 1000.0
+        return max(min_sleep, min(max_sleep, sleep_seconds))
+
+    # Event Handlers
+    def _handle_connect_all(self, params):
+        """Connect all devices"""
+        for device in self.device_manager.get_all_instances():
+            self._connect_device(device)
+
+    def _handle_disconnect_all(self, params):
+        """Disconnect all devices"""
+        for device in self.device_manager.get_all_instances():
+            self._disconnect_device(device)
+
+    def _handle_connect_devices(self, params, clean_start = True):
+        """Connect specific devices"""
+        device_ids = params.get('devices', [])
+        for device_id in device_ids:
+            device = self.device_manager.get_device_instance(device_id)
+            if device:
+                self._connect_device(device, clean_start)
+
+    def _handle_disconnect_devices(self, params):
+        """Disconnect specific devices"""
+        device_ids = params.get('devices', [])
+        for device_id in device_ids:
+            device = self.device_manager.get_device_instance(device_id)
+            if device:
+                self._disconnect_device(device)
+
+    def _handle_reconnect_devices(self, params):
+        """Reconnect specific devices"""
+        self._handle_connect_devices(params, False)
+
+    def _handle_start_publishing(self, params):
+        """Start publishing for specific devices"""
+        device_ids = params.get('devices', [])
+        for device_id in device_ids:
+            device = self.device_manager.get_device_instance(device_id)
+            if device and isinstance(device.device_definition, PublisherDefinition):
+                if not device.is_publishing:
+                    device.is_publishing = True
+                    elapsed_ms = self.event_scheduler.get_elapsed_ms()
+                    device.last_publish_time_ms = elapsed_ms
+                    console_log(ConsoleLogLevel.DEBUG, f"Started publishing for {device_id}", __name__)
+                
+    def _handle_start_publishing_all(self, params):
+        """Start publishing for all devices"""
+        for device in self.device_manager.get_all_publishers():
+            if not device.is_publishing:
+                device.is_publishing = True
+                elapsed_ms = self.event_scheduler.get_elapsed_ms()
+                device.last_publish_time_ms = elapsed_ms
+                console_log(ConsoleLogLevel.DEBUG, f"Started publishing for {device.instance_id}", __name__)
+                
+    def _handle_stop_publishing(self, params):
+        """Stop publishing for specific devices"""
+        device_ids = params.get('devices', [])
+        for device_id in device_ids:
+            device = self.device_manager.get_device_instance(device_id)
+            if device:
+                device.is_publishing = False
+                console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device_id}", __name__)
+                
+    def _handle_stop_publishing_all(self, params):
+        """Stop publishing for all devices"""
+        for device in self.device_manager.get_all_publishers():
+            if device.is_publishing:
+                device.is_publishing = False
+                console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device.instance_id}", __name__)
+
+    def _handle_change_purpose(self, params):
+        """Change purpose for a specific device"""
+        device_id = params.get('device')
+        new_purpose = params.get('new_purpose')
+
+        device = self.device_manager.get_device_instance(device_id)
         
-        for topic in topics_to_publish_on:
+        # Publisher purposes
+        if device:
+            old_purpose = device.current_purpose_filter
+            device.current_purpose_filter = new_purpose
+            console_log(ConsoleLogLevel.DEBUG, f"Changed purpose for {device_id}: {old_purpose} -> {new_purpose}", __name__)
+
+            # Publisher change
+            if isinstance(device.device_definition, PublisherDefinition):
+                # Re-register with broker if needed (for PM methods 3 and 4)
+                device_def = device.device_definition
+                GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(
+                    device.mqtt_client, self.method, device_def.topic, new_purpose
+                )
             
-            # Generate a payload to simulate variable data (if requested)
-            payload = None
-            num_bytes = random.randrange(self.current_config.min_payload_length_bytes, self.current_config.max_payload_length_bytes)         
-            if num_bytes > 0:
-                payload = random.randbytes(num_bytes)
-                
-            # Lock this section to prevent a race condition with _on_publish
-            self.publish_lock.acquire()
-                
-            message_counter = test_client.get_send_counter()
-            
-            results = GlobalDefs.CLIENT_MODULE.publish_with_purpose(test_client.client, self.method, topic, 
-                                                                    test_client.publish_topics[topic], qos=self.current_config.qos, payload=payload, correlation_data=message_counter)
-            
-            # Save time
-            now = time.time()
-            
-            for message_info, topic in results:
-                if not test_client.name in self.pending_publishes:
-                    self.pending_publishes[test_client.name] = dict()
-                    
-                # For purpose management method 1, we need to extract the topic properly
-                if self.method == GlobalDefs.PurposeManagementMethod.PM_1:
-                    purpose_start_index = topic.rfind('[')
-                    topic = topic[:purpose_start_index - 1]
-                    
-                self.pending_publishes[test_client.name][message_info.mid] = (topic, test_client.publish_topics[topic], "DATA", now)
-                
-                # Save message counter for correlations
-                test_client.message_id_to_send_counter[message_info.mid] = message_counter
-                
-            # Release lock
-            self.publish_lock.release()
+            # Subscriber change 
+            if isinstance(device.device_definition, SubscriberDefinition):
+                self._subscribe_device(device, True, old_purpose)
         
-        
+
+    def _connect_device(self, device: DeviceInstance, clean_start: bool = True):
+        """Connect a single device"""
+        if device.is_connected:
+            return
+
+        result_code = GlobalDefs.CLIENT_MODULE.connect_client(
+            device.mqtt_client, self.broker_address, self.broker_port, clean_start
+        )
+
+        if result_code == 0:  # Success
+            device.mqtt_client.loop_start()
+            console_log(ConsoleLogLevel.DEBUG, f"Connecting device: {device.instance_id}", __name__)
+        else:
+            raise RuntimeError(f"Failed to connect device {device.instance_id}")
+
+    def _disconnect_device(self, device: DeviceInstance):
+        """Disconnect a single device"""
+        if not device.is_connected:
+            return
+
+        GlobalDefs.CLIENT_MODULE.disconnect_client(device.mqtt_client)
+        device.is_connected = False
+        console_log(ConsoleLogLevel.INFO, f"Disconnected device: {device.instance_id}", __name__)
+
+    def _disconnect_all_devices(self):
+        """Disconnect all devices"""
+        for device in self.device_manager.get_all_instances():
+            self._disconnect_device(device)
+
     ###################################     
     #   CALLBACK FUNCTIONS
     ###################################
-    def _on_connect(self, client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags, reason_code: ReasonCode, properties: Properties):   
-        if reason_code == 0: # Success
-            # Userdata is a TestClient object
-            userdata.is_connected = True
-            
-            # Log
-            GlobalDefs.LOGGING_MODULE.log_connect(time.time(), self.my_id, userdata.name)
-            
-            # Resubscribe clients
-            self._subscribe_client_for_operations(userdata)
-            self._subscribe_client_for_data(userdata)
-        
-            # Reestablish publication purpose and c1 operational data
-            self._register_initial_publication_purposes_for_client(userdata)
-            self._register_data_for_c1_operations_for_client(userdata)
-            
-            
+    def _on_connect(self, client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags, reason_code: ReasonCode, properties: Properties):
+        """Callback for device connection"""
+        if reason_code == 0:  # Success
+            device_instance: DeviceInstance = userdata
+            device_instance.is_connected = True
+
+            GlobalDefs.LOGGING_MODULE.log_connect(time.time(), self.my_id, device_instance.mqtt_client_name)
+
+            # Subscribe if this is a subscriber
+            if isinstance(device_instance.device_definition, SubscriberDefinition):
+                self._subscribe_device(device_instance)
+                
+                # Subscribe to operational topics and initialize c1 data
+                self._subscribe_device_for_operations(device_instance)
+                self._register_subscribers_c1_operation_data(device_instance)
+
+            # Register publisher if needed
+            if isinstance(device_instance.device_definition, PublisherDefinition):
+                device_def = device_instance.device_definition
+                GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(
+                    device_instance.mqtt_client, self.method,
+                    device_def.topic, device_instance.current_purpose_filter
+                )
+                
+                self._subscribe_device_for_operations(device_instance)
+                    
+
     def _on_disconnect(self, client: mqtt.Client, userdata: Any, flags: mqtt.DisconnectFlags, reason_code: ReasonCode, properties: Properties):
-        if reason_code == 0: # Success
-            # Userdata is a TestClient object
-            userdata.is_connected = False
-            
-            # Log
-            GlobalDefs.LOGGING_MODULE.log_disconnect(time.time(), self.my_id, userdata.name)
-            
-    def _on_subscribe(self, client, userdata, mid, reason_code_list, properties):
+        """Callback for device disconnection"""
+        if reason_code == 0:  # Success
+            device_instance: DeviceInstance = userdata
+            device_instance.is_connected = False
+
+            GlobalDefs.LOGGING_MODULE.log_disconnect(time.time(), self.my_id, device_instance.mqtt_client_name)
+
+    def _subscribe_device(self, device: DeviceInstance, existing_subscription: bool = False, previous_purpose_filter: str = ""):
+        """Subscribe a device to its configured topics"""
+        if not isinstance(device.device_definition, SubscriberDefinition):
+            return
+
+        device_def = device.device_definition
+
+        self.subscribe_lock.acquire()
+
+        results = GlobalDefs.CLIENT_MODULE.subscribe_with_purpose_filter(
+            device.mqtt_client, self.method,
+            device_def.topic_filter, device.current_purpose_filter,
+            self.current_config.qos, existing_subscription, previous_purpose_filter
+        )
+
+        now = time.time()
+
+        for result_code, mid, sub_id in results:
+            if result_code == 0:
+                if device.mqtt_client_name not in self.pending_subscribes:
+                    self.pending_subscribes[device.mqtt_client_name] = {}
+                self.pending_subscribes[device.mqtt_client_name][mid] = (
+                    device_def.topic_filter, device.current_purpose_filter, sub_id, now
+                )
+                device.subscribed_topics[device_def.topic_filter] = device.current_purpose_filter
+                
+        # For existing subscriptions using method 4, we won't get a subscription response since we don't send a new subscription
+        # We need to record updated filter and log manually here
+        if existing_subscription and self.method == GlobalDefs.PurposeManagementMethod.PM_4:
+            device.subscribed_topics[device_def.topic_filter] = device.current_purpose_filter
+            sub_id = "UNKNOWN"
+            if device.mqtt_client_name in self.sub_ids and device_def.topic_filter in self.sub_ids[device.mqtt_client_name]:
+                sub_id = self.sub_ids[device.mqtt_client_name][device_def.topic_filter]
+            GlobalDefs.LOGGING_MODULE.log_subscribe(time, self.my_id, device.mqtt_client_name, device_def.topic_filter, device.current_purpose_filter, sub_id)
+
+        self.subscribe_lock.release()
+
+    def _subscribe_device_for_operations(self, device: DeviceInstance):
+        """Subscribe clients to relevant operational topics"""
         
-        # Make sure we're not in a subscribeh
+        client_id = device.mqtt_client_name
+        operation_response_topic = f"{GlobalDefs.OP_RESPONSE_TOPIC}/{client_id}"
+        
+        if isinstance(device.device_definition, PublisherDefinition):
+            topics_to_sub = [GlobalDefs.ON_TOPIC, GlobalDefs.ONP_TOPIC + "/" + client_id, operation_response_topic]
+            
+        elif isinstance(device.device_definition, SubscriberDefinition):
+            topics_to_sub = [GlobalDefs.OR_TOPIC, GlobalDefs.ORS_TOPIC + "/" + client_id, operation_response_topic]
+
+        # Subscribe to all operational topics
+        for topic in topics_to_sub:
+            self.subscribe_lock.acquire()
+
+            results = GlobalDefs.CLIENT_MODULE.subscribe_for_operations(
+                device.mqtt_client, self.method, topic
+            )
+
+            now = time.time()
+
+            # Track subscriptions so we can log them when they complete
+            for result_code, mid, sub_id in results:
+                if result_code == 0:
+                    if device.mqtt_client_name not in self.pending_subscribes:
+                        self.pending_subscribes[device.mqtt_client_name] = {}
+                    self.pending_subscribes[device.mqtt_client_name][mid] = (
+                        topic, GlobalDefs.OP_PURPOSE, sub_id, now
+                    )
+
+            self.subscribe_lock.release()
+
+    def _on_subscribe(self, client: mqtt.Client, userdata: Any, mid: Any, reason_code_list: List[ReasonCode], properties : Properties):
+        
+        # Make sure we're not in a subscribe
         self.subscribe_lock.acquire()
         
         # We can release immediately since this is a callback
@@ -552,17 +750,28 @@ class TestExecutor:
         # trigger this function had their information set
         self.subscribe_lock.release()
         
+        device_instance: DeviceInstance = userdata
+        
         # Check if message exists and was successful
-        if userdata.name in self.pending_subscribes:
-            if mid in self.pending_subscribes[userdata.name]: 
+        if device_instance.mqtt_client_name in self.pending_subscribes:
+            if mid in self.pending_subscribes[device_instance.mqtt_client_name]: 
                     
                 # We only do one subscribe per packet so this is always len one and is success for QoS 0/1/2
                 if reason_code_list[0] == 0 or reason_code_list[0] == 1 or reason_code_list[0] == 2:
-                    topic_filter, purpose_filter, sub_id, time = self.pending_subscribes[userdata.name][mid]
-                    GlobalDefs.LOGGING_MODULE.log_subscribe(time, self.my_id, userdata.name, topic_filter, purpose_filter, sub_id)
+                    topic_filter, purpose_filter, sub_id, time = self.pending_subscribes[device_instance.mqtt_client_name][mid]
+                    
+                    if device_instance.mqtt_client_name not in self.sub_ids:
+                        self.sub_ids[device_instance.mqtt_client_name] = dict()
+                    self.sub_ids[device_instance.mqtt_client_name][topic_filter] = sub_id
+                    
+                    # Check if this is an operational subscriber
+                    if topic_filter.startswith(GlobalDefs.OP_RESPONSE_TOPIC) or topic_filter.startswith(GlobalDefs.ON_TOPIC) or topic_filter.startswith(GlobalDefs.ONP_TOPIC) or topic_filter.startswith(GlobalDefs.OR_TOPIC) or topic_filter.startswith(GlobalDefs.ORS_TOPIC):
+                        GlobalDefs.LOGGING_MODULE.log_op_subscribe(time, self.my_id, device_instance.mqtt_client_name, topic_filter, purpose_filter, sub_id)
+                    else:
+                        GlobalDefs.LOGGING_MODULE.log_subscribe(time, self.my_id, device_instance.mqtt_client_name, topic_filter, purpose_filter, sub_id)
         
     
-    def _on_publish(self, client: mqtt.Client, userdata: TestClient, mid:int, reason_code: ReasonCode, properties: Properties):    
+    def _on_publish(self, client: mqtt.Client, userdata: Any, mid:int, reason_code: ReasonCode, properties: Properties):    
         
         # Make sure we're not in a publish
         self.publish_lock.acquire()
@@ -572,15 +781,17 @@ class TestExecutor:
         # trigger this function had their information set
         self.publish_lock.release()
         
+        device_instance: DeviceInstance = userdata
+        
         # Check if message exists and was successful
-        if userdata.name in self.pending_publishes:
-            if mid in self.pending_publishes[userdata.name]: 
+        if device_instance.mqtt_client_name in self.pending_publishes:
+            if mid in self.pending_publishes[device_instance.mqtt_client_name]: 
                 
-                corr_data = userdata.message_id_to_send_counter[mid]
+                corr_data = device_instance.message_id_to_send_counter[mid]
                     
                 # If successful
                 if reason_code == 0:
-                    topic, purpose, op_type, time = self.pending_publishes[userdata.name][mid]
+                    topic, purpose, op_type, time = self.pending_publishes[device_instance.mqtt_client_name][mid]
                     
                     # Do not log communications to the broker
                     # if not topic[0] == '$':
@@ -588,20 +799,25 @@ class TestExecutor:
                     # Check if operational or data
                     if op_type == "DATA":
                         # Log message
-                        GlobalDefs.LOGGING_MODULE.log_publish(time, self.my_id, userdata.name, corr_data, topic, purpose, op_type)
+                        GlobalDefs.LOGGING_MODULE.log_publish(time, self.my_id, device_instance.mqtt_client_name, corr_data, topic, purpose, op_type)
                     else:
-                        # Log message
-                        GlobalDefs.LOGGING_MODULE.log_operation_publish(time, self.my_id, userdata.name, corr_data, topic, purpose, op_type, self.current_config.possible_operations[op_type])
+                        # Log operational message - use self.all_operations which includes C1_REG ops
+                        op_category = self.all_operations.get(op_type, "UNKNOWN")
+                        GlobalDefs.LOGGING_MODULE.log_operation_publish(time, self.my_id, device_instance.mqtt_client_name, corr_data, topic, purpose, op_type, op_category)
                 
                 
     def _on_message_recv(self, client: mqtt.Client, userdata: Any, message: mqtt.MQTTMessage):
         
+        timestamp = time.time()
+        
         operational_message = False
+        operational_response = False
         operation_type = ""
         sending_client = "UNKNOWN"
         op_message_type = "OP"
         correlation_data = -1
         sub_id: List[int] = list()
+        device_instance: DeviceInstance = userdata
         
         # Check properties
         if message.properties is not None:
@@ -613,6 +829,7 @@ class TestExecutor:
                     elif name == GlobalDefs.PROPERTY_ID:
                         sending_client = value
                     elif name == GlobalDefs.PROPERTY_OP_STATUS:
+                        operational_response = True
                         op_message_type = value
                         
             if hasattr(message.properties, "CorrelationData"):
@@ -623,8 +840,17 @@ class TestExecutor:
             else:
                 sub_id.append(-1)
 
-        # Log messages
+        # Log messages based on type
         if operational_message:
-            GlobalDefs.LOGGING_MODULE.log_operation_recv(time.time(), self.my_id, userdata.name, sending_client, correlation_data, message.topic, operation_type, self.current_config.possible_operations[operation_type], op_message_type, sub_id[0])
+            op_category = self.current_config.all_operations.get(operation_type, "UNKNOWN")
+            
+            if operational_response:
+                GlobalDefs.LOGGING_MODULE.log_operation_response_recv(timestamp, self.my_id, device_instance.mqtt_client_name, sending_client, correlation_data, message.topic, operation_type, op_category, op_message_type, sub_id[0])
+            else:    
+                GlobalDefs.LOGGING_MODULE.log_operation_recv(timestamp, self.my_id, device_instance.mqtt_client_name, sending_client, correlation_data, message.topic, operation_type, op_category, op_message_type, sub_id[0])
+
+                # Send respones to all received requests assuming we're a subscriber
+                if isinstance(device_instance.device_definition, SubscriberDefinition) and hasattr(message.properties, "ResponseTopic") and message.properties.ResponseTopic:
+                    self._send_operational_response(device_instance, message.properties.ResponseTopic, operation_type, correlation_data)
         else:
-            GlobalDefs.LOGGING_MODULE.log_recv(time.time(), self.my_id, userdata.name, sending_client, correlation_data, message.topic, "DATA", sub_id[0])
+            GlobalDefs.LOGGING_MODULE.log_recv(timestamp, self.my_id, device_instance.mqtt_client_name, sending_client, correlation_data, message.topic, "DATA", sub_id[0])

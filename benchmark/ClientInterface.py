@@ -377,7 +377,7 @@ def publish_with_purpose(client: mqtt.Client, method: GlobalDefs.PurposeManageme
     return ret_list
 
 
-def publish_operation_request(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, operation: str, correlation_data: int | None = None) -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
+def publish_operation_request(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, operation: str, correlation_data: int | None = None, qos: int = 0) -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
     
     # Determine topic
     if method == GlobalDefs.PurposeManagementMethod.PM_1:
@@ -395,17 +395,92 @@ def publish_operation_request(client: mqtt.Client, method: GlobalDefs.PurposeMan
         properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big', signed=False)
    
     if operation == "Informed":
-        return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=2)
+        return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=qos)
     if operation == "Informed-Reg":
-        return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=2, payload=f'{client._client_id.decode("utf-8")} Right to Know Data')
+        return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=qos, payload=f'{client._client_id.decode("utf-8")} Right to Know Data')
     elif operation == "Access" or operation == "Portability" or operation == "Erasure" or operation == "Restriction" or operation == "Object" or operation == "AutoDecision":
         properties.UserProperty = (GlobalDefs.PROPERTY_OP_INFO, "*")
-        return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=2)
+        return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=qos)
     elif operation == "Rectification":
         properties.UserProperty = (GlobalDefs.PROPERTY_OP_INFO, "*")
-        return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=2, payload="ReplacementData")
+        return _handle_operation_publish(client, method, topic, GlobalDefs.OP_PURPOSE, properties, qos=qos, payload="ReplacementData")
     else:
         return list()
+    
+def publish_operation_response(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, topic: str, operation: str, op_result: str, correlation_data: int | None = None, qos: int = 0) -> List[Tuple[mqtt.MQTTMessageInfo, str]]:
+    
+    ret_list = list()
+    
+    # Set properties and payload based on operations
+    properties = mqtt.Properties(packetType=mqtt.PacketTypes.PUBLISH)
+    properties.UserProperty = (GlobalDefs.PROPERTY_OPERATION, operation)
+    properties.UserProperty = (GlobalDefs.PROPERTY_OP_STATUS, op_result)
+    properties.ResponseTopic = f'{GlobalDefs.OP_RESPONSE_TOPIC}/{client._client_id.decode("utf-8")}'
+    
+    if correlation_data is not None:
+        required_bytes = ceil(correlation_data.bit_length() / 8.0)
+        properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big', signed=True)
+    
+    # == Method 0 (No method) ==
+    if method == GlobalDefs.PurposeManagementMethod.PM_0:
+        
+        # Update properties
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
+        
+         # We directly publish without care for purposes
+        msg_info = client.publish(topic, qos=qos, properties=properties)
+        return [(msg_info, topic)]
+    
+    # == Method 1 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_1:
+        
+        # Update properties
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
+        
+        # Need to send message to each purpose topic
+        described_purposes = GlobalDefs.find_described_purposes(GlobalDefs.OP_PURPOSE)
+        
+        # Convert the purpose list into topics
+        topic_list = list()
+        for purpose in described_purposes:
+            purpose = purpose.replace('/', '|')
+            purpose_subtopic = f'[{purpose}]'
+            full_topic = f'{topic}/{purpose_subtopic}'
+            topic_list.append(full_topic)
+
+        # Publish to each topic
+        for curr_topic in topic_list:
+            pub_result = client.publish(curr_topic, qos=qos, properties=properties)
+            ret_list.append((pub_result, curr_topic))
+            
+        return ret_list
+    
+    # == Method 2 ==
+    elif method == GlobalDefs.PurposeManagementMethod.PM_2:
+        
+        # Publish with required MP as a property
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+        properties.UserProperty = (GlobalDefs.PROPERTY_MP, GlobalDefs.OP_PURPOSE)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
+        
+        msg_info = client.publish(topic, qos=qos, properties=properties)
+        return [(msg_info, topic)]  # Return list of (message info, topic) tuples
+    
+    # == Methods 3 and 4 == #
+    elif method == GlobalDefs.PurposeManagementMethod.PM_3 or method == GlobalDefs.PurposeManagementMethod.PM_4:
+
+        properties.UserProperty = (GlobalDefs.PROPERTY_ID, client._client_id)
+        properties.UserProperty = (GlobalDefs.PROPERTY_CONSENT, "1")
+        
+        # This is just a normal publish
+        register_publish_purpose_for_topic(client, method, topic, GlobalDefs.OP_PURPOSE, qos) # Need to register
+        msg_info = client.publish(topic, qos=qos, properties=properties)
+        return [(msg_info, topic)]  # Return list of (message info, topic) tuples
+        
+    # Not required if method is invalid
+    return ret_list
 
 
 def _handle_operation_publish(client: mqtt.Client, method: GlobalDefs.PurposeManagementMethod, 
