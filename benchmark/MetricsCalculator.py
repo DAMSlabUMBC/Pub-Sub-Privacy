@@ -531,7 +531,7 @@ class MetricsCalculator:
                 recv_events_for_pub = [e for e in subscriber_recvs 
                                         if e.corr_data == pub_event.corr_data
                                         and e.sending_client_id == pub_event.client_id
-                                        and e.topic == pub_event.topic]
+                                        and e.topic.startswith(pub_event.topic)]
                 
                 # Check if we have a subscription for this message with compatible purposes and the relevant time
                 matched_subs = 0
