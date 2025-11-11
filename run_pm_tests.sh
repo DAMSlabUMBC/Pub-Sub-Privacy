@@ -13,6 +13,7 @@ if [ -z "$PM_METHOD" ]; then
     exit 1
 fi
 
+CONFIG_DIR="test-configs"
 DOCKER_COMPOSE_FILE="docker-compose-${PM_METHOD}.yml"
 BROKER_CONTAINER="benchmark-mosquitto-${PM_METHOD}"
 RUNNER_CONTAINER="benchmark-runner-${PM_METHOD}"
@@ -52,9 +53,9 @@ sleep 10
 
 # Go find all the test configs for this PM method
 if [ "$PM_METHOD" = "baseline" ]; then
-    CONFIG_FILES=$(find configs -name "*baseline*.cfg" -o -name "*pm0*.cfg" 2>/dev/null | sort)
+    CONFIG_FILES=$(find $CONFIG_DIR -name "*baseline*.cfg" -o -name "*pm0*.cfg" 2>/dev/null | sort)
 else
-    CONFIG_FILES=$(find configs -name "*${PM_METHOD}*.cfg" 2>/dev/null | sort)
+    CONFIG_FILES=$(find $CONFIG_DIR -name "*${PM_METHOD}*.cfg" 2>/dev/null | sort)
 fi
 
 if [ -z "$CONFIG_FILES" ]; then
@@ -62,7 +63,7 @@ if [ -z "$CONFIG_FILES" ]; then
     # Try to find configs by looking inside the files for the PM method number
     PM_NUM=$(echo "$PM_METHOD" | grep -o '[0-9]' | head -1)
     if [ -n "$PM_NUM" ]; then
-        CONFIG_FILES=$(grep -l "purpose_management_method: ${PM_NUM}" configs/*.cfg 2>/dev/null | sort)
+        CONFIG_FILES=$(grep -l "purpose_management_method: ${PM_NUM}" $CONFIG_DIR/*.cfg 2>/dev/null | sort)
     fi
 fi
 

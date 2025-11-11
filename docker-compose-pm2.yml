@@ -1,23 +1,23 @@
 services:
   mosquitto:
     build:
-      context: ../../dams-mosquitto
+      context: ../dams-mosquitto
       dockerfile: Dockerfile
-    container_name: benchmark-mosquitto-pm3
+    container_name: benchmark-mosquitto-pm2
     ports:
       - "1883:1883"
       - "9100:9100"
     networks:
       - benchmark-net
     volumes:
-      - ./broker-configs/mosquitto-pm3.conf:/etc/mosquitto/mosquitto.conf
+      - ./broker-configs/mosquitto-pm2.conf:/etc/mosquitto/mosquitto.conf
 
   # Benchmark Test Runner
   benchmark-runner:
     build:
       context: .
       dockerfile: Dockerfile.benchmark
-    container_name: benchmark-runner-pm3
+    container_name: benchmark-runner-pm2
     depends_on:
       - mosquitto
     networks:
