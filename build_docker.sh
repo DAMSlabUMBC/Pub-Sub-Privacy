@@ -16,7 +16,7 @@ echo ""
 # Build the MQTT-DAP mosquitto broker (this one is used for PM2-4)
 echo "${YELLOW}Building MQTT-DAP broker (used for PM2-4)...${NC}"
 echo "This will take 5-10 minutes the first time..."
-docker-compose -f docker-compose-pm2.yml build
+docker compose -f docker-compose-pm2.yml build
 
 echo ""
 echo "${GREEN}✓ MQTT-DAP broker built${NC}"
@@ -24,7 +24,7 @@ echo ""
 
 # Build the baseline mosquitto and the test runner
 echo "${YELLOW}Building baseline and benchmark runner...${NC}"
-docker-compose -f docker-compose-baseline.yml build
+docker compose -f docker-compose-baseline.yml build
 
 echo ""
 echo "${GREEN}✓ Baseline and runner built${NC}"

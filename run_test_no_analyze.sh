@@ -28,7 +28,7 @@ echo "Running benchmark test: $CONFIG_NAME"
 echo "================================================================================"
 
 # Actually run the test
-python3 benchmark/Benchmark.py run "$CONFIG_FILE" "$BROKER_ADDRESS" -p "$BROKER_PORT" -v
+python3 benchmark/Benchmark.py run "$CONFIG_FILE" "$BROKER_ADDRESS" -p "$BROKER_PORT"
 
 # Grab the latest log file for this config
 LOG_FILE=$(ls -t logs/${CONFIG_NAME}_*.log 2>/dev/null | head -n 1)

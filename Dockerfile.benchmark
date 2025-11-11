@@ -11,7 +11,6 @@ WORKDIR /app
 
 # Copy in the benchmark code
 COPY ./benchmark/ ./benchmark/
-COPY ./test-configs/ ./test-configs/
 COPY *.sh .
 
 # Install all the Python stuff

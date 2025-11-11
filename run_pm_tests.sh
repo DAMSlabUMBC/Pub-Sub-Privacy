@@ -45,7 +45,7 @@ mkdir -p "$RESULTS_DIR" "$LOGS_DIR"
 
 # Fire up the containers
 echo "Starting ${PM_METHOD} broker and runner..."
-docker-compose -f "$DOCKER_COMPOSE_FILE" up -d
+docker compose -f "$DOCKER_COMPOSE_FILE" up -d
 
 # Give the broker a sec to get ready
 echo "Waiting for broker to initialize..."
@@ -69,7 +69,7 @@ fi
 
 if [ -z "$CONFIG_FILES" ]; then
     echo "${RED}ERROR: No ${PM_METHOD} test configs found${NC}"
-    docker-compose -f "$DOCKER_COMPOSE_FILE" down
+    docker compose -f "$DOCKER_COMPOSE_FILE" down
     exit 1
 fi
 
@@ -104,7 +104,7 @@ for CONFIG in $CONFIG_FILES; do
         PASSED=$((PASSED + 1))
 
         # Grab the logs from the container
-        docker cp "$RUNNER_CONTAINER:/app/logs/${CONFIG_NAME}_"* "$LOGS_DIR/" 2>/dev/null || true
+		docker exec "$RUNNER_CONTAINER" /bin/bash -c "ls /app/logs/${CONFIG_NAME}_*" | while read line; do docker cp "$RUNNER_CONTAINER":/$line "$LOGS_DIR/"; done
     else
         echo "${RED}✗ FAILED${NC}: $CONFIG_NAME"
         FAILED=$((FAILED + 1))
@@ -130,7 +130,7 @@ echo "==========================================================================
 echo ""
 echo "Next steps:"
 echo "  1. Analyze logs:      ./analyze_logs.sh $LOGS_DIR"
-echo "  2. Stop containers:   docker-compose -f $DOCKER_COMPOSE_FILE down"
+echo "  2. Stop containers:   docker compose -f $DOCKER_COMPOSE_FILE down"
 echo ""
 
 if [ $FAILED -gt 0 ]; then

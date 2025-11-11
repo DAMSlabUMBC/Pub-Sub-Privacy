@@ -18,11 +18,24 @@ class MQTTClient(Client):
             self._out_packet.appendleft(packet)
             eventmask = selectors.EVENT_WRITE | eventmask
 
-        if self._sockpairR is None:
-            sel.register(self._sock, eventmask)
-        else:
-            sel.register(self._sock, eventmask)
-            sel.register(self._sockpairR, selectors.EVENT_READ)
+        try:
+            if self._sockpairR is None:
+                sel.register(self._sock, eventmask)
+            else:
+                sel.register(self._sock, eventmask)
+                sel.register(self._sockpairR, selectors.EVENT_READ)
+                
+        except TypeError:
+            # Socket isn't correct type, in likelihood connection is lost
+            return MQTTErrorCode.MQTT_ERR_CONN_LOST
+        except ValueError:
+            # Can occur if we just reconnected but rlist/wlist contain a -1 for
+            # some reason.
+            return MQTTErrorCode.MQTT_ERR_CONN_LOST
+        except Exception:
+            # Note that KeyboardInterrupt, etc. can still terminate since they
+            # are not derived from Exception
+            return MQTTErrorCode.MQTT_ERR_UNKNOWN
 
         pending_bytes = 0
         if hasattr(self._sock, "pending"):

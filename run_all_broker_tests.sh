@@ -40,7 +40,7 @@ for PM in baseline pm1 pm2 pm3 pm4; do
     fi
 
     # Stop and clean up before next broker
-    docker-compose -f docker-compose-${PM}.yml down
+    docker compose -f docker-compose-${PM}.yml down
     sleep 5
 done
 
