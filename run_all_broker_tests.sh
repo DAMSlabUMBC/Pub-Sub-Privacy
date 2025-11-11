@@ -32,6 +32,8 @@ BROKER_RESULTS=()
 for PM in baseline pm1 pm2 pm3 pm4; do
     echo ""
     echo "${BLUE}>>> Running ${PM} tests...${NC}"
+	
+	docker compose -f docker-compose-${PM}.yml build
 
     if ./run_pm_tests.sh ${PM}; then
         BROKER_RESULTS+=("${GREEN}✓ ${PM}${NC}")
