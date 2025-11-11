@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+# Get the system stuff we need
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up where we'll work
+WORKDIR /app
+
+# Copy in the benchmark code
+COPY ../benchmark/ ./benchmark/
+COPY ../test-configs/ ./configs/
+COPY ../docker-scripts/run_test_with_metrics.sh .
+COPY ../docker-scripts/run_all_tests.sh .
+
+# Install all the Python stuff
+RUN pip install --no-cache-dir -r ./benchmark/requirements.txt
+
+# Make the scripts runnable
+RUN chmod +x run_test_with_metrics.sh run_all_tests.sh
+
+# Set up directories for output
+RUN mkdir -p logs results
+
+# Make sure Python output shows up right away
+ENV PYTHONUNBUFFERED=1
+
+CMD ["/bin/bash"]

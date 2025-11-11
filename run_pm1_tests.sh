@@ -1,1 +1,0 @@
-run_pm_tests.sh

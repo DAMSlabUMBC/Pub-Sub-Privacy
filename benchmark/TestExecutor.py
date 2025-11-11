@@ -257,7 +257,7 @@ class TestExecutor():
                     full_instance_id = instance_id
 
                 # Create MQTT client
-                client_name = f"{test_config.name}__{full_instance_id}"
+                client_name = f"{full_instance_id}"
                 mqtt_client = GlobalDefs.CLIENT_MODULE.create_v5_client(client_name)
 
                 # Set callbacks
