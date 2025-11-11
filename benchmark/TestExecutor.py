@@ -21,29 +21,6 @@ from LoggingModule import console_log, ConsoleLogLevel
 class TestExecutor():
     """Test executor with deterministic event scheduling and per-device publication rates"""
 
-    class TestClient:
-        client: mqtt.Client
-        name: str
-        subscribed_topics: Dict[str, str] # Maps topic filter to purpose filter
-        publish_topics: Dict[str, str] # Maps topic to purpose
-        is_connected: bool
-        msg_send_counter: int
-        message_id_to_send_counter: Dict[int, int]
-        
-        def __init__(self, client: mqtt.Client, name: str):
-            self.client = client
-            self.name = name
-            self.subscribed_topics = dict()
-            self.publish_topics = dict()
-            self.is_connected = False
-            self.msg_send_counter = 0
-            self.message_id_to_send_counter = dict()
-            
-        def get_send_counter(self) -> int:
-            ret_val = self.msg_send_counter
-            self.msg_send_counter = self.msg_send_counter + 1
-            return ret_val
-
     my_id: str
     broker_address: str
     broker_port: int
@@ -52,7 +29,6 @@ class TestExecutor():
     stop_event: threading.Event
     duration_scheduler: sched.scheduler
     
-    all_clients: List[TestClient]
     pending_publishes: Dict[str, Dict[int, Tuple[str, str, str, float]]] # client name => [message id => (topic, purpose, message_type, timestamp)]
     pending_subscribes: Dict[str, Dict[int, Tuple[str, str, int, float]]] # client name => [message id => (topic_filter, purpose_filter, sub_id, timestamp)]
     sub_ids: Dict[str, Dict[str, int]]
@@ -637,8 +613,10 @@ class TestExecutor():
     ###################################
     def _on_connect(self, client: mqtt.Client, userdata: Any, flags: mqtt.ConnectFlags, reason_code: ReasonCode, properties: Properties):
         """Callback for device connection"""
+        
+        device_instance: DeviceInstance = userdata
+                
         if reason_code == 0:  # Success
-            device_instance: DeviceInstance = userdata
             device_instance.is_connected = True
 
             GlobalDefs.LOGGING_MODULE.log_connect(time.time(), self.my_id, device_instance.mqtt_client_name)

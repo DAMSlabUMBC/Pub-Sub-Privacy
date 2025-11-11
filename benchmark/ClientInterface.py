@@ -1,4 +1,5 @@
 import paho.mqtt.client as mqtt
+import MQTTClient
 from paho.mqtt.subscribeoptions import SubscribeOptions
 from paho.mqtt.reasoncodes import ReasonCode
 from paho.mqtt.enums import MQTTProtocolVersion, CallbackAPIVersion
@@ -23,7 +24,7 @@ paho.mqtt.client.Client
 def create_v5_client(client_id: str) -> mqtt.Client:
 
     # Instantiate client
-    mqtt_client = mqtt.Client(
+    mqtt_client = MQTTClient.MQTTClient(
         callback_api_version=CallbackAPIVersion.VERSION2,
         client_id=client_id,
         protocol=MQTTProtocolVersion.MQTTv5,
