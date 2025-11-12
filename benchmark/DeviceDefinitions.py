@@ -1,4 +1,5 @@
 import paho.mqtt.client as mqtt
+import re
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Any
 from LoggingModule import console_log, ConsoleLogLevel
@@ -146,6 +147,11 @@ class DeviceManager:
     def get_device_instance(self, instance_id: str) -> Optional[DeviceInstance]:
         """Get a device instance by ID"""
         return self.device_instances.get(instance_id)
+    
+    def get_all_device_instance_for_id(self, instance_id: str) -> list[DeviceInstance]:
+        """Get all device instance by ID"""
+        return [inst for inst in self.device_instances.values()
+                    if re.search(f"^{instance_id}(_\d+)?$", inst.instance_id) is not None]
 
     def get_all_publishers(self) -> list[DeviceInstance]:
         """Get all publisher instances"""

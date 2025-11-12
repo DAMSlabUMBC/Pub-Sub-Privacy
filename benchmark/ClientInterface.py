@@ -421,7 +421,7 @@ def publish_operation_response(client: mqtt.Client, method: GlobalDefs.PurposeMa
     
     if correlation_data is not None:
         required_bytes = ceil(correlation_data.bit_length() / 8.0)
-        properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big', signed=True)
+        properties.CorrelationData = correlation_data.to_bytes(length=required_bytes, byteorder='big', signed=False)
     
     # == Method 0 (No method) ==
     if method == GlobalDefs.PurposeManagementMethod.PM_0:

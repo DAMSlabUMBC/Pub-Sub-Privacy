@@ -554,30 +554,33 @@ class TestExecutor():
                 console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device.instance_id}", __name__)
 
     def _handle_change_purpose(self, params):
-        """Change purpose for a specific device"""
-        device_id = params.get('device')
+        """Change purpose for specific devices"""
+        device_ids = params.get('devices', [])
         new_purpose = params.get('new_purpose')
-
-        device = self.device_manager.get_device_instance(device_id)
         
-        # Publisher purposes
-        if device:
-            old_purpose = device.current_purpose_filter
-            device.current_purpose_filter = new_purpose
-            console_log(ConsoleLogLevel.DEBUG, f"Changed purpose for {device_id}: {old_purpose} -> {new_purpose}", __name__)
+        for device_id in device_ids:
+            device_list = self.device_manager.get_all_device_instance_for_id(device_id)
+                 
+            for device in device_list:
+                
+                # Publisher purposes
+                if device:
+                    old_purpose = device.current_purpose_filter
+                    device.current_purpose_filter = new_purpose
+                    console_log(ConsoleLogLevel.DEBUG, f"Changed purpose for {device.mqtt_client_name}: {old_purpose} -> {new_purpose}", __name__)
 
-            # Publisher change
-            if isinstance(device.device_definition, PublisherDefinition):
-                # Re-register with broker if needed (for PM methods 3 and 4)
-                device_def = device.device_definition
-                GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(
-                    device.mqtt_client, self.method, device_def.topic, new_purpose
-                )
-            
-            # Subscriber change 
-            if isinstance(device.device_definition, SubscriberDefinition):
-                self._subscribe_device(device, True, old_purpose)
-        
+                    # Publisher change
+                    if isinstance(device.device_definition, PublisherDefinition):
+                        # Re-register with broker if needed (for PM methods 3 and 4)
+                        device_def = device.device_definition
+                        GlobalDefs.CLIENT_MODULE.register_publish_purpose_for_topic(
+                            device.mqtt_client, self.method, device_def.topic, new_purpose
+                        )
+                    
+                    # Subscriber change 
+                    if isinstance(device.device_definition, SubscriberDefinition):
+                        self._subscribe_device(device, True, old_purpose)
+                
 
     def _connect_device(self, device: DeviceInstance, clean_start: bool = True):
         """Connect a single device"""

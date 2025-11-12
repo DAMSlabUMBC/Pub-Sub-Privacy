@@ -352,10 +352,10 @@ class ConfigParser():
                 event['devices'] = event_config.get('devices', [])
 
             elif event_type == 'change_purpose':
-                event['device'] = event_config.get('device')
+                event['devices'] = event_config.get('devices')
                 event['new_purpose'] = event_config.get('new_purpose')
-                if not event['device'] or not event['new_purpose']:
-                    raise Exception("change_purpose event requires 'device' and 'new_purpose'")
+                if not event['devices'] or not event['new_purpose']:
+                    raise Exception("change_purpose event requires 'devices' and 'new_purpose'")
 
             events.append(event)
 
