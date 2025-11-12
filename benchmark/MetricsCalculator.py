@@ -565,7 +565,7 @@ class MetricsCalculator:
                     actual_received = len(recv_events_for_pub)    
                     
                     if actual_received < matched_subs:
-                        metrics.bad_reject += (actual_received - matched_subs)               
+                        metrics.bad_reject += (matched_subs - actual_received)               
             
             # Calculate false accept and false reject
             if metrics.total_recv_count > 0:
