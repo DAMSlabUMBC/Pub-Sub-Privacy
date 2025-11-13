@@ -76,25 +76,20 @@ python3 benchmark/Benchmark.py analyze logs/set1_city_static_10p_1subs_pm1_2024-
 
 ### Docker Usage
 
-Build all Docker images:
-```bash
-./build_all.sh
-```
-
 Run all tests across all purpose management methods:
 ```bash
 ./run_all_broker_tests.sh
 ```
 
-This runs tests for baseline, PM1, PM2, PM3, and PM4 brokers with automatic broker restart between tests and parallel log analysis.
+This builds and runs tests for baseline, PM1, PM2, PM3, and PM4 brokers with automatic broker restart between tests and parallel log analysis.
 
 Run tests for a specific PM method:
 ```bash
-./run_baseline_tests.sh  # No purpose management
-./run_pm1_tests.sh       # Registration by Message
-./run_pm2_tests.sh       # Registration by Subscription
-./run_pm3_tests.sh       # System-Managed Purposes
-./run_pm4_tests.sh       # Hybrid Purpose Management
+./run_pm_tests.sh baseline  # PM0: No purpose management
+./run_pm_tests.sh pm1       # PM1: Purpose-Encoding Topics
+./run_pm_tests.sh pm2       # PM2: Per-Message Declaration
+./run_pm_tests.sh pm3       # PM3: Registration by Message
+./run_pm_tests.sh pm4       # PM4: Registration by Topic
 ```
 
 ## Test Configuration
