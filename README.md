@@ -1,139 +1,155 @@
-# MQTT-DAP-Benchmark
+# MQTT-DAP Benchmark
 
-A benchmarking framework for [**MQTT-DAP-Mosquitto-GDPR (MQTT Data Access and Processing)**](https://github.com/DAMSlabUMBC/dams-mosquitto/tree/develop)
-, designed to evaluate broker preformance under realistic conditions.
+Benchmark framework for evaluating MQTT brokers with purpose-based access control and operational request handling.
 
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Key Features](#key-features)
-- [Architecture](#architecture)
-- [Running the Benchmark](#running-the-benchmark)
-- [Client Interface](#client-interface)
-- [Metrics](#metrics)
-- [Configuration](#configuration)
-- [Dependencies](#dependencies)
-- [License](#license)
-
----
+Designed to test the [MQTT-DAP-Mosquitto](https://github.com/DAMSlabUMBC/dams-mosquitto/tree/develop) broker implementation.
 
 ## Overview
 
-This benchmark addresses testing MQTT-DAP-Mosquitto-GDPR by:
+This framework tests MQTT brokers with DAP (Data Access and Processing) extensions:
 
-- Supporting custom MQTT-DAP control packets
-- Simulating real-world IoT environments
-- Enabling testing of purpose-based access control mechanisms
-- Supporting operational requests across distributed clients with variable behaviors
+- **Purpose-Based Access Control (PBAC)**: Verifies messages are only delivered to subscribers with permitted purposes
+- **Operational Requests**: Tests GDPR data subject rights (Access, Portability, Erasure, Rectification, Restriction, Objection, Automated Decisions)
+- **Realistic IoT Workloads**: Simulates smart city and industrial scenarios with variable device counts, payload sizes, and publishing rates
+- **Multiple Purpose Management Methods**: Supports baseline (no PM) and four purpose management approaches (PM1-PM4)
 
----
+## Features
 
-## Key Features
+- Deterministic event scheduling for reproducible tests
+- Variable payloads from small sensor data to large LIDAR scans
+- Dynamic purpose changes during runtime
+- Client disconnection/reconnection patterns
+- Comprehensive metrics: system resources, messaging performance, purpose correctness, operational correctness
+- Docker integration with automatic broker restart between tests
 
-- Support for client disconnection/reconnection patterns  
-- Variable payload sizes and publishing rates  
-- Testing for different purpose management approaches  
-- Evaluation of operational request coverage  
-- Distributed testing capabilities  
+## Installation
 
----
+### Prerequisites
+- Python 3.8+
+- pip
 
-## Architecture
-
-The benchmark is composed of five components:
-
-1. **Management Module**  
-   Parses configuration files and controls the benchmark node lifecycle.
-
-2. **Synchronization Module**  
-   Coordinates test state across distributed benchmark nodes to ensure proper initialization and completion.
-
-3. **Test Execution Module**  
-   Runs test logic, manages clients, sends/receives messages, evaluates purposes, and invokes operations.
-
-4. **Result Logging Module**  
-   Asynchronously logs results during test execution.
-
-5. **Results Calculation Module**  
-   Aggregates data across nodes to compute performance metrics.
-
----
-
-## Running the Benchmark
-
-```bash
-# Run the benchmark with a configuration file and broker IP address
-python3 benchmark/Benchmark.py run /configs/<conf_file> <broker_ip>
-```
-## Client Interface
-
-To integrate a new MQTT-DAP client, implement the following functions as defined in `ClientInterface.py`:
-
-- `connect(client_id, broker_address, broker_port)`  
-  Connect the client to the specified MQTT broker.
-
-- `disconnect()`  
-  Disconnect the client from the MQTT broker.
-
-- `subscribe(topic, qos, purpose)`  
-  Subscribe to a topic with a specified QoS level and purpose metadata.
-
-- `unsubscribe(topic)`  
-  Unsubscribe from a given topic.
-
-- `publish(topic, payload, qos, purpose)`  
-  Publish a message to a topic with an associated QoS level and purpose.
-
-- `define_purpose(purpose_id, purpose_properties)`  
-  Define a purpose with specific properties for access control.
-
-- `invoke_operation(operation, targets, arguments)`  
-  Invoke a distributed operation across client targets.
-
-- `receive_callback(callback_function)`  
-  Set a callback to handle incoming messages during test execution.
-
----
-
-## Metrics
-
-The benchmark measures the following performance and correctness indicators:
-
-- **Message Latency**  
-  The time elapsed between message publication and receipt.
-
-- **Message Throughput**  
-  The number of messages received per second.
-
-- **PBAC Correctness**  
-  The accuracy of Purpose-Based Access Control filtering.
-
-- **Operational Coverage**  
-  The success rate of completed operational requests.
-
----
-
-## Dependencies
-
-The MQTT-DAP Benchmark requires the following Python packages:
-
-- `ischedule==1.2.7`  
-- `markdown-it-py==3.0.0`  
-- `mdurl==0.1.2`  
-- `paho-mqtt==2.1.0`  
-- `Pygments==2.19.1`  
-- `PyYAML==6.0.2`  
-- `rich==14.0.0`  
-- `sortedcontainers==2.4.0`  
-
-You can install all dependencies using `pip`:
+### Install Dependencies
 
 ```bash
 pip install -r benchmark/requirements.txt
 ```
+
+Or use a virtual environment:
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r benchmark/requirements.txt
+```
+
+## Usage
+
+### Run a Test
+
+```bash
+python3 benchmark/Benchmark.py run <config_file> <broker_address> [options]
+```
+
+**Arguments:**
+- `config_file`: Path to YAML test configuration
+- `broker_address`: IP address or hostname of MQTT broker
+- `-p, --port`: Broker port (default: 1883)
+- `-o, --logfile`: Custom log file path
+- `-v, --verbose`: Enable verbose logging
+
+**Example:**
+```bash
+python3 benchmark/Benchmark.py run test-configs/set1_city_static_10p_1subs_pm1.cfg localhost -v
+```
+
+### Analyze Results
+
+Process a log file to calculate metrics:
+
+```bash
+python3 benchmark/Benchmark.py analyze <log_file> [-o OUTPUT_FILE]
+```
+
+**Example:**
+```bash
+python3 benchmark/Benchmark.py analyze logs/set1_city_static_10p_1subs_pm1_2024-11-13_15-30-00.log
+```
+
+### Docker Usage
+
+Build all Docker images:
+```bash
+./build_all.sh
+```
+
+Run all tests across all purpose management methods:
+```bash
+./run_all_broker_tests.sh
+```
+
+This runs tests for baseline, PM1, PM2, PM3, and PM4 brokers with automatic broker restart between tests and parallel log analysis.
+
+Run tests for a specific PM method:
+```bash
+./run_baseline_tests.sh  # No purpose management
+./run_pm1_tests.sh       # Registration by Message
+./run_pm2_tests.sh       # Registration by Subscription
+./run_pm3_tests.sh       # System-Managed Purposes
+./run_pm4_tests.sh       # Hybrid Purpose Management
+```
+
+## Test Configuration
+
+Test configurations are YAML files defining:
+- Device instances (publishers/subscribers with device types, purposes, publishing rates)
+- Purpose definitions and hierarchy
+- Scheduled events (purpose changes, disconnections, operational requests)
+- Test parameters (duration, log directory, purpose management method)
+
+See `test-configs/` directory for examples.
+
+## Metrics
+
+### Broker Statistics
+- CPU and memory usage (min, max, average, variance)
+
+### Messaging Performance
+- Latency (min, max, average, variance in milliseconds)
+- Throughput (messages per second)
+- Header overhead (average MQTT header size in bytes)
+
+### Purpose Correctness
+Per subscriber:
+- False accept rate (messages received without matching purpose)
+- False reject rate (expected messages not received due to purpose mismatch)
+
+### Operational Request Correctness
+Per operation type:
+- Coverage (percentage of target data successfully retrieved)
+- Leakage (unauthorized data included in responses)
+- Completion (percentage of requests receiving responses)
+- Lost responses (requests with missing/incomplete responses)
+
+### Category Breakdown
+- C1_REG: Data registered during test execution
+- C2: Historical data from previous connections
+- C3: Data from currently connected sessions
+
+All metrics are exported to CSV for comparison across runs.
+
+## Architecture
+
+1. **ConfigParser** (`ConfigParser.py`): Parses YAML test configurations
+2. **TestExecutor** (`TestExecutor.py`): Manages test lifecycle, MQTT clients, and event scheduling
+3. **LoggingModule** (`LoggingModule.py`): Asynchronously logs events to disk
+4. **MetricsCalculator** (`MetricsCalculator.py`): Post-processes logs to compute performance metrics
+
+## Dependencies
+
+See `benchmark/requirements.txt` for the complete list. Key dependencies:
+- paho-mqtt 2.1.0
+- PyYAML 6.0.2
+- rich 14.0.0
+
 ## License
 
-This project is licensed under the **GNU General Public License v3.0**.  
-See the [LICENSE](./LICENSE) file for details.
+GNU General Public License v3.0 - See [LICENSE](./LICENSE)
