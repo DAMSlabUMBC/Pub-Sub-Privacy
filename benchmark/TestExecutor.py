@@ -686,7 +686,7 @@ class TestExecutor():
             sub_id = "UNKNOWN"
             if device.mqtt_client_name in self.sub_ids and device_def.topic_filter in self.sub_ids[device.mqtt_client_name]:
                 sub_id = self.sub_ids[device.mqtt_client_name][device_def.topic_filter]
-            GlobalDefs.LOGGING_MODULE.log_subscribe(time, self.my_id, device.mqtt_client_name, device_def.topic_filter, device.current_purpose_filter, sub_id)
+            GlobalDefs.LOGGING_MODULE.log_subscribe(time.time(), self.my_id, device.mqtt_client_name, device_def.topic_filter, device.current_purpose_filter, sub_id)
 
         self.subscribe_lock.release()
 
