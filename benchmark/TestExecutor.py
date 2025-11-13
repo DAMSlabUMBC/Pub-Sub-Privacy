@@ -500,16 +500,16 @@ class TestExecutor():
         """Connect specific devices"""
         device_ids = params.get('devices', [])
         for device_id in device_ids:
-            device = self.device_manager.get_device_instance(device_id)
-            if device:
+            device_list = self.device_manager.get_all_device_instance_for_id(device_id)
+            for device in device_list:
                 self._connect_device(device, clean_start)
 
     def _handle_disconnect_devices(self, params):
         """Disconnect specific devices"""
         device_ids = params.get('devices', [])
         for device_id in device_ids:
-            device = self.device_manager.get_device_instance(device_id)
-            if device:
+            device_list = self.device_manager.get_all_device_instance_for_id(device_id)
+            for device in device_list:
                 self._disconnect_device(device)
 
     def _handle_reconnect_devices(self, params):
@@ -520,13 +520,14 @@ class TestExecutor():
         """Start publishing for specific devices"""
         device_ids = params.get('devices', [])
         for device_id in device_ids:
-            device = self.device_manager.get_device_instance(device_id)
-            if device and isinstance(device.device_definition, PublisherDefinition):
-                if not device.is_publishing:
-                    device.is_publishing = True
-                    elapsed_ms = self.event_scheduler.get_elapsed_ms()
-                    device.last_publish_time_ms = elapsed_ms
-                    console_log(ConsoleLogLevel.DEBUG, f"Started publishing for {device_id}", __name__)
+            device_list = self.device_manager.get_all_device_instance_for_id(device_id)
+            for device in device_list:
+                if device and isinstance(device.device_definition, PublisherDefinition):
+                    if not device.is_publishing:
+                        device.is_publishing = True
+                        elapsed_ms = self.event_scheduler.get_elapsed_ms()
+                        device.last_publish_time_ms = elapsed_ms
+                        console_log(ConsoleLogLevel.DEBUG, f"Started publishing for {device_id}", __name__)
                 
     def _handle_start_publishing_all(self, params):
         """Start publishing for all devices"""
@@ -541,10 +542,11 @@ class TestExecutor():
         """Stop publishing for specific devices"""
         device_ids = params.get('devices', [])
         for device_id in device_ids:
-            device = self.device_manager.get_device_instance(device_id)
-            if device:
-                device.is_publishing = False
-                console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device_id}", __name__)
+            device_list = self.device_manager.get_all_device_instance_for_id(device_id)
+            for device in device_list:
+                if device:
+                    device.is_publishing = False
+                    console_log(ConsoleLogLevel.DEBUG, f"Stopped publishing for {device_id}", __name__)
                 
     def _handle_stop_publishing_all(self, params):
         """Stop publishing for all devices"""
