@@ -2,7 +2,7 @@
 
 Benchmark framework for evaluating MQTT brokers with purpose-based access control and operational request handling.
 
-Designed to test the [MQTT-DAP-Mosquitto](https://github.com/DAMSlabUMBC/dams-mosquitto/tree/develop) broker implementation.
+Designed to test the [MQTT-DAP-Mosquitto](https://anonymous.4open.science/r/Submission-1074-MQTT-DAP) broker implementation.
 
 ## Overview
 

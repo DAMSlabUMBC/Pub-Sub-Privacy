@@ -1,7 +1,7 @@
 services:
   mosquitto:
     build:
-      context: ../dams-mosquitto
+      context: ../mqtt-dap-mosquitto
       dockerfile: Dockerfile
     container_name: benchmark-mosquitto-pm4
     ports:
